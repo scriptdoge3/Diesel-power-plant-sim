@@ -53,6 +53,7 @@ enum class OrderStatus { OFFERED, ACCEPTED, DECLINED, ACTIVE, COMPLETED, FAILED,
  * A call from the co-op dispatcher: be on the bus carrying at least this much
  * between these hours. Answering the phone is most of the reputation game.
  */
+@kotlinx.serialization.Serializable
 data class DispatchOrder(
     val id: String,
     val issuedAt: Double,

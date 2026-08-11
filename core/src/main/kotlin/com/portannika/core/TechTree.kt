@@ -19,6 +19,7 @@ enum class Flag {
     N1_CERTIFIED, ENGINE_HALL,
 }
 
+@kotlinx.serialization.Serializable
 data class Turbo(val maxBoostBar: Double, val tau: Double, val eff: Double)
 
 data class Mods(

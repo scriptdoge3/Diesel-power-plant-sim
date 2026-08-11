@@ -553,4 +553,81 @@ class Sim(seed: Int = 20260811) {
     fun activeAlarms(): List<Pair<String, Alarm>> =
         units.flatMap { u -> u.alarms.map { u.spec.name to it } }
             .sortedByDescending { it.second.critical }
+
+    // ---------------------------------------------------------------- saving
+
+    /** Overwrite this world with a saved one. See Save.kt. */
+    fun applySave(s: SaveState) {
+        rng.restore(s.rngState)
+        gameSeconds = s.gameSeconds
+        timeScale = s.timeScale
+        cash = s.cash
+        fuelL = s.fuelL
+        fuelPricePerL = s.fuelPricePerL
+        ownedTech = s.ownedTech.toMutableSet()
+        plant = buildPlantSpec(ownedTech)
+        autoPlant = s.autoPlant
+        gameWon = s.gameWon
+
+        units.clear()
+        for (us in s.units) {
+            val g = Genset(us.id, us.spec, us.isUnit8)
+            g.runState = runCatching { RunState.valueOf(us.runState) }.getOrDefault(RunState.STOPPED)
+            g.rpm = us.rpm; g.rack = us.rack; g.fieldPU = us.fieldPU; g.emfPU = us.emfPU
+            g.boostBar = us.boostBar
+            g.coolantC = us.coolantC; g.oilC = us.oilC; g.egtC = us.egtC; g.windingC = us.windingC
+            g.batterySoC = us.batterySoC; g.phaseDeg = us.phaseDeg
+            g.breakerClosed = us.breakerClosed; g.onBus = us.onBus
+            g.fuelValveOpen = us.fuelValveOpen
+            g.speederPU = us.speederPU; g.droop = us.droop
+            g.fieldRheostat = us.fieldRheostat
+            g.avrSetpointPU = us.avrSetpointPU; g.avrVoltDroop = us.avrVoltDroop
+            g.runHours = us.runHours; g.lifetimeKWh = us.lifetimeKWh; g.fuelUsedL = us.fuelUsedL
+            g.starts = us.starts
+            g.wear = us.wear.copy(); g.service = us.service.copy()
+            g.airFilterFouling = us.airFilterFouling
+            g.fuelFilterFouling = us.fuelFilterFouling
+            g.radiatorFouling = us.radiatorFouling
+            g.oilCondition = us.oilCondition
+            g.failureText = us.failureText
+            units += g
+        }
+        if (units.none { it.isUnit8 }) {
+            units.add(0, Genset("u8", buildUnit8Spec(ownedTech), true))
+        }
+        selectedUnitId = if (units.any { it.id == s.selectedUnitId }) s.selectedUnitId else units.first().id
+
+        for (ss in s.station) {
+            val u = grid.stationUnits.find { it.spec.id == ss.id } ?: continue
+            u.online = ss.online; u.starting = ss.starting; u.startTimer = ss.startTimer
+            u.speedSetPU = ss.speedSetPU; u.outputKW = ss.outputKW; u.emfPU = ss.emfPU
+            u.runHours = ss.runHours; u.failed = ss.failed; u.failedFor = ss.failedFor
+        }
+        grid.frequencyHz = s.frequencyHz
+        grid.busVoltPU = s.busVoltPU
+        grid.unservedKWh = s.unservedKWh
+        grid.updateWeather(gameSeconds)
+
+        market.listings = s.listings.toMutableList()
+        market.nextRefreshDay = s.nextRefreshDay
+
+        campaign.completed.clear(); campaign.completed += s.completed
+        campaign.orders.clear(); campaign.orders += s.orders
+        campaign.reputation = s.reputation
+        campaign.peakDeliveredKW = s.peakDeliveredKW
+        campaign.totalDeliveredKWh = s.totalDeliveredKWh
+        campaign.ordersAnswered = s.ordersAnswered
+        campaign.ordersMissed = s.ordersMissed
+        campaign.baseloadContract = "baseload" in campaign.completed
+
+        log.clear()
+        for (l in s.log) {
+            log.addLast(LogEntry(l.t, l.text, runCatching { LogLevel.valueOf(l.level) }.getOrDefault(LogLevel.INFO)))
+        }
+        ledger.clear()
+        for (l in s.ledger) ledger.addLast(LedgerEntry(l.t, l.text, l.amount, l.category))
+        days.clear()
+        for (d in s.days) days += DaySummary(d.day, d.revenue, d.fuelCost, d.maintenance, d.capital, d.kWh, d.runHours)
+        lastDay = currentDay()
+    }
 }

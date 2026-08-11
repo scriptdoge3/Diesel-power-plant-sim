@@ -1,0 +1,43 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Gauge dial: the outer scale arc -->
+    <path
+        android:strokeColor="#5FB3D4"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 34,72 A 26,26 0 1 1 74,72" />
+
+    <!-- Redline segment at the top of the scale -->
+    <path
+        android:strokeColor="#E0674F"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 66,36 A 26,26 0 0 1 74,72" />
+
+    <!-- Needle sitting a little past the middle of the scale -->
+    <path
+        android:strokeColor="#F0C36A"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M 54,58 L 66,41" />
+
+    <!-- Hub -->
+    <path
+        android:fillColor="#F0C36A"
+        android:pathData="M 54,54 m -4.5,0 a 4.5,4.5 0 1,0 9,0 a 4.5,4.5 0 1,0 -9,0" />
+
+    <!-- Engine block below the dial: three cylinders on a bedplate -->
+    <path
+        android:fillColor="#8FA3B0"
+        android:pathData="M 38,78 h 32 v 4 h -32 z" />
+    <path
+        android:fillColor="#8FA3B0"
+        android:pathData="M 41,72 h 6 v 6 h -6 z M 51,72 h 6 v 6 h -6 z M 61,72 h 6 v 6 h -6 z" />
+</vector>

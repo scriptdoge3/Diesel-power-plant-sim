@@ -24,6 +24,7 @@ import kotlin.math.sqrt
 enum class RunState { STOPPED, PRELUBE, CRANKING, STARTING, RUNNING, COOLDOWN, FAILED }
 
 /** Component condition, 0.0 = new, 1.0 = destroyed. */
+@kotlinx.serialization.Serializable
 data class Wear(
     var bearings: Double = 0.14,
     var rings: Double = 0.19,
@@ -41,6 +42,7 @@ data class Wear(
 }
 
 /** Hours-since-service counters that drive the maintenance screen. */
+@kotlinx.serialization.Serializable
 data class ServiceHours(
     var oil: Double = 180.0,
     var fuelFilter: Double = 310.0,

@@ -7,6 +7,7 @@ import kotlin.math.min
  * this; it never looks at the tech tree. Purchased second-hand units get a
  * [GensetSpec] straight from their market listing instead.
  */
+@kotlinx.serialization.Serializable
 data class GensetSpec(
     val name: String,
     val make: String,

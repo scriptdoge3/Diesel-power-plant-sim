@@ -11,6 +11,7 @@ import kotlin.math.roundToInt
  *  came off the last barge. Stock rotates when the barge calls.
  * ========================================================================== */
 
+@kotlinx.serialization.Serializable
 data class MarketListing(
     val id: String,
     val name: String,
