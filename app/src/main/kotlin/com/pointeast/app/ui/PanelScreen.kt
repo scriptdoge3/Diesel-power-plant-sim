@@ -1,7 +1,6 @@
 package com.pointeast.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,150 +11,57 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pointeast.app.GameHost
-import com.pointeast.core.EngineBase
 import com.pointeast.core.Genset
 import com.pointeast.core.GovernorBase
 import com.pointeast.core.Nominal
-import com.pointeast.core.RunState
-import com.pointeast.core.Sim
 import kotlin.math.abs
 
 /**
- * The control panel for one machine, laid out for a phone held in one hand.
+ * The switchboard.
  *
- * Two large meters carry the reading you take constantly -- frequency and
- * kilowatts -- and everything else is a compact secondary row. Controls are
- * below the instruments, in reach of a thumb, in the order you actually touch
- * them: start, synchronise, load, excite.
+ * Electrical instruments and electrical controls, and nothing else. Every
+ * meter on this board reads a quantity you can change from this board:
+ * frequency and kilowatts with the speeder, volts and reactive with the field,
+ * and the synchroscope with both. The engine's own gauges -- coolant, oil,
+ * exhaust, boost -- live on the engine board, because that is where they are
+ * bolted in a real station and because they are not things you steer with.
  */
 @Composable
 fun PanelScreen(host: GameHost) {
     val sim = host.sim
     val u = sim.selectedUnit
 
-    Column(
-        Modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp)
-            .padding(top = 7.dp, bottom = 18.dp),
-    ) {
-        if (sim.units.size > 1) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                    .padding(bottom = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                for (unit in sim.units) {
-                    Chip(
-                        "${unit.spec.name}  ${"%.0f".format(unit.elecKW)}kW",
-                        unit.id == sim.selectedUnitId,
-                        colour = when {
-                            unit.runState == RunState.FAILED -> Pal.red
-                            unit.onBus -> Pal.green
-                            unit.isRunning -> Pal.amber
-                            else -> Pal.chrome
-                        },
-                    ) { sim.selectUnit(unit.id) }
-                }
-            }
-        }
-
-        UnitHeader(u, sim)
-        Spacer(Modifier.height(7.dp))
-        MainMeters(u)
-        Spacer(Modifier.height(7.dp))
-        SecondaryMeters(u)
-        Spacer(Modifier.height(7.dp))
-        EngineControls(host, u)
-        Spacer(Modifier.height(7.dp))
-        SyncAndBreaker(host, u)
-        Spacer(Modifier.height(7.dp))
-        GovernorControls(host, u)
-        Spacer(Modifier.height(7.dp))
-        ExcitationControls(host, u)
-        Spacer(Modifier.height(7.dp))
-        Detail(u)
-    }
+    UnitSelector(sim)
+    UnitHeader(u, sim)
+    Spacer(Modifier.height(7.dp))
+    PowerMeters(u)
+    Spacer(Modifier.height(7.dp))
+    VoltageMeters(u)
+    Spacer(Modifier.height(7.dp))
+    SyncAndBreaker(host, u)
+    Spacer(Modifier.height(7.dp))
+    GovernorControls(host, u)
+    Spacer(Modifier.height(7.dp))
+    ExcitationControls(host, u)
+    Spacer(Modifier.height(7.dp))
+    ElectricalReadout(u)
 }
 
-// ------------------------------------------------------------------- header
+// ------------------------------------------------- what the speeder controls
 
 @Composable
-private fun UnitHeader(u: Genset, sim: Sim) {
-    PanelCard(accent = if (u.onBus) Pal.green.copy(alpha = 0.7f) else Pal.panelEdge) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(u.spec.name, fontFamily = Mono, fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold, color = Pal.ink, maxLines = 1)
-                Text(u.spec.make, fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("%.0f kW  ·  %.0f kVA".format(u.spec.ratedKW, u.spec.ratedKVA),
-                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint, maxLines = 1)
-            }
-            val (label, colour) = when (u.runState) {
-                RunState.FAILED -> "FAILED" to Pal.red
-                RunState.RUNNING -> (if (u.onBus) "ON LINE" else "RUNNING") to
-                    (if (u.onBus) Pal.green else Pal.amber)
-                RunState.CRANKING -> "CRANKING" to Pal.amber
-                RunState.PRELUBE -> "PRELUBE" to Pal.blue
-                RunState.STARTING -> "STARTING" to Pal.amber
-                RunState.COOLDOWN -> "COOLING" to Pal.blue
-                RunState.STOPPED -> "STOPPED" to Pal.inkFaint
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(label, fontFamily = Mono, fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold, color = colour, letterSpacing = 1.sp,
-                    maxLines = 1, softWrap = false)
-                Text("%,.0f h".format(u.runHours), fontFamily = Mono, fontSize = 9.sp,
-                    color = Pal.inkFaint)
-            }
-        }
-        u.failureText?.let {
-            Spacer(Modifier.height(4.dp))
-            Text(it, fontFamily = Mono, fontSize = 10.sp, color = Pal.red)
-            Text("Repair it under Control Room, Machines.", fontFamily = Mono, fontSize = 9.sp,
-                color = Pal.inkFaint)
-        }
-
-        Spacer(Modifier.height(7.dp))
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Lamp("RUN", u.isRunning, Pal.green)
-            Lamp("BKR", u.breakerClosed, Pal.green)
-            Lamp("SMOKE", u.smokeExcess > 0.12, Pal.amber)
-            Lamp("HI EGT", u.egtC > EngineBase.EGT_WARN_C, Pal.amber)
-            Lamp("HI TMP", u.coolantC > EngineBase.COOLANT_WARN_C, Pal.red)
-            Lamp("LO OIL", u.isRunning && u.oilPressureBar < EngineBase.OIL_PRESS_MIN_BAR, Pal.red)
-            Lamp("O/L", u.kva > u.spec.ratedKVA * 1.02, Pal.red)
-            Lamp("AUTO", sim.autoPlant && u.spec.autoStart, Pal.violet)
-        }
-    }
-}
-
-// ------------------------------------------------------------- the two meters
-
-@Composable
-private fun MainMeters(u: Genset) {
+private fun PowerMeters(u: Genset) {
     PanelCard {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AnalogGauge(
@@ -168,7 +74,6 @@ private fun MainMeters(u: Genset) {
                     Triple(Nominal.FREQ + Nominal.FREQ_BAND, 96.0, Pal.red),
                 ),
                 majorTicks = 6,
-                subtitle = "%.0f rpm".format(u.rpm),
             )
             AnalogGauge(
                 "Real power", u.elecKW, -10.0, u.spec.ratedKW * 1.3, "kW", Modifier.weight(1f),
@@ -182,92 +87,38 @@ private fun MainMeters(u: Genset) {
     }
 }
 
+// --------------------------------------------------- what the field controls
+
 @Composable
-private fun SecondaryMeters(u: Genset) {
+private fun VoltageMeters(u: Genset) {
     PanelCard {
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AnalogGauge(
                 "Volts", u.terminalVoltsPU * Nominal.GEN_VOLTS, 0.0, 600.0, "V",
-                Modifier.weight(1f), compact = true, majorTicks = 6,
-                bands = listOf(Triple(456.0, 504.0, Pal.green), Triple(540.0, 600.0, Pal.red)),
+                Modifier.weight(1f), majorTicks = 6,
+                bands = listOf(
+                    Triple(456.0, 504.0, Pal.green),
+                    Triple(540.0, 600.0, Pal.red),
+                ),
+                subtitle = "%,.0f V line".format(u.terminalVoltsPU * Nominal.LINE_VOLTS),
             )
             AnalogGauge(
-                "Coolant", u.coolantC, 0.0, 120.0, "°C", Modifier.weight(1f), compact = true,
-                bands = listOf(
-                    Triple(EngineBase.THERMOSTAT_OPEN_C, EngineBase.COOLANT_WARN_C, Pal.green),
-                    Triple(EngineBase.COOLANT_WARN_C, EngineBase.COOLANT_TRIP_C, Pal.amber),
-                    Triple(EngineBase.COOLANT_TRIP_C, 120.0, Pal.red),
-                ),
+                "Reactive", u.kvar, -u.spec.ratedKVA * 0.6, u.spec.ratedKVA * 0.85, "kVAr",
+                Modifier.weight(1f), majorTicks = 6,
+                subtitle = "pf %.2f %s".format(
+                    abs(u.powerFactor), if (u.kvar >= 0) "lag" else "lead"),
             )
-            AnalogGauge(
-                "Oil", u.oilPressureBar, 0.0, 5.0, "bar", Modifier.weight(1f),
-                decimals = 1, compact = true, majorTicks = 5,
-                bands = listOf(
-                    Triple(0.0, EngineBase.OIL_PRESS_MIN_BAR, Pal.red),
-                    Triple(EngineBase.OIL_PRESS_MIN_BAR, 1.6, Pal.amber),
-                ),
-            )
-            if (u.spec.turbo != null) {
-                AnalogGauge(
-                    "Boost", u.boostBar, 0.0, u.spec.turbo!!.maxBoostBar * 1.2, "bar",
-                    Modifier.weight(1f), decimals = 2, compact = true, majorTicks = 4,
-                )
-            } else {
-                AnalogGauge(
-                    "Exhaust", u.egtC, 0.0, 800.0, "°C", Modifier.weight(1f),
-                    compact = true, majorTicks = 4,
-                    bands = listOf(
-                        Triple(EngineBase.EGT_WARN_C, EngineBase.EGT_LIMIT_C, Pal.amber),
-                        Triple(EngineBase.EGT_LIMIT_C, 800.0, Pal.red),
-                    ),
-                )
-            }
-        }
-    }
-}
-
-// ----------------------------------------------------------- engine controls
-
-@Composable
-private fun EngineControls(host: GameHost, u: Genset) {
-    val sim = host.sim
-    PanelCard("Engine") {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PanelButton(
-                "START", Modifier.weight(1f),
-                enabled = !u.isRunning && u.runState != RunState.FAILED &&
-                    u.runState != RunState.CRANKING,
-                colour = Pal.green.copy(alpha = 0.30f), textColour = Pal.greenGlow,
-            ) { sim.startUnit(u.id) }
-            PanelButton("STOP", Modifier.weight(1f), enabled = u.isRunning) { sim.stopUnit(u.id) }
-            PanelButton("E-STOP", Modifier.weight(1f),
-                colour = Pal.red.copy(alpha = 0.34f), textColour = Pal.redGlow,
-            ) { sim.emergencyStop(u.id) }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ToggleSwitch("PRELUBE", u.prelubeRunning) { sim.setPrelube(u.id, !u.prelubeRunning) }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (u.prelubeRunning) "Oil pumped up before cranking. Slower start, far less wear."
-                    else "Dry start. Fast, and it costs the bearings.",
-                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint, lineHeight = 12.sp,
-                )
-                Spacer(Modifier.height(5.dp))
-                BarMeter("Battery", u.batterySoC, "%.0f%%".format(u.batterySoC * 100),
-                    if (u.batterySoC > 0.3) Pal.green else Pal.red)
-            }
         }
         Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BarMeter("Fuel rack", u.rack, "%.0f%%".format(u.rack * 100),
-                if (u.smokeExcess > 0.1) Pal.amber else Pal.brass, Modifier.weight(1f))
-            BarMeter("Tank", sim.fuelL / sim.plant.fuelTankL,
-                "%.0f L".format(sim.fuelL),
-                if (sim.fuelL / sim.plant.fuelTankL > 0.15) Pal.blue else Pal.red,
-                Modifier.weight(1f))
-        }
+        BarMeter(
+            "Stator current", u.ampsPU, "%.0f%% of rated".format(u.ampsPU * 100),
+            when {
+                u.ampsPU > 1.05 -> Pal.red
+                u.ampsPU > 0.95 -> Pal.amber
+                else -> Pal.green
+            },
+            markerFrac = 1.0,
+        )
     }
 }
 
@@ -301,14 +152,13 @@ private fun SyncAndBreaker(host: GameHost, u: Genset) {
                 Text(
                     "limits  ±%.0f rpm  ±%.0f°".format(
                         Nominal.SYNC_SLIP_RPM, Nominal.SYNC_ANGLE_DEG),
-                    fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint,
-                    maxLines = 1,
+                    fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint, maxLines = 1,
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
                     when {
                         !live && u.onBus -> "On line."
-                        !live -> "Start the machine first."
+                        !live -> "Start the machine on the engine board first."
                         !check.voltOk -> "Match volts with the field."
                         check.slipHz < Nominal.SYNC_MIN_SLIP_HZ ->
                             "Slow -- raise the speeder until it creeps clockwise."
@@ -336,7 +186,7 @@ private fun SyncAndBreaker(host: GameHost, u: Genset) {
                     colour = if (ready) Pal.green.copy(alpha = 0.34f) else Pal.panelHigh,
                     textColour = if (ready) Pal.greenGlow else Pal.ink,
                 ) { host.say(sim.closeBreaker(u.id, force = false)) }
-                PanelButton("FORCE", enabled = live, small = false,
+                PanelButton("FORCE", enabled = live,
                     colour = Pal.red.copy(alpha = 0.22f), textColour = Pal.red) {
                     host.say(sim.closeBreaker(u.id, force = true))
                 }
@@ -349,10 +199,8 @@ private fun SyncAndBreaker(host: GameHost, u: Genset) {
 private fun SyncRow(label: String, value: String, ok: Boolean) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.size(8.dp)
-                .background(if (ok) Pal.green else Pal.red, RoundedCornerShape(4.dp)),
-        )
+        Box(Modifier.size(8.dp)
+            .background(if (ok) Pal.green else Pal.red, RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(7.dp))
         Text(label, fontFamily = Mono, fontSize = 9.sp, color = Pal.inkDim,
             maxLines = 1, softWrap = false, modifier = Modifier.width(52.dp))
@@ -369,8 +217,6 @@ private fun GovernorControls(host: GameHost, u: Genset) {
     val sim = host.sim
     val isoch = u.spec.isoch && u.droop < 0.001
     PanelCard("Governor  ·  ${if (u.spec.egov) "electronic" else "flyweight"}") {
-        // Big thumb keys either side of the handwheel: this is the control the
-        // player touches more than any other.
         Row(verticalAlignment = Alignment.CenterVertically) {
             NudgeButton("−", big = true) { sim.adjustSpeeder(u.id, -0.0035) }
             Spacer(Modifier.width(6.dp))
@@ -379,7 +225,7 @@ private fun GovernorControls(host: GameHost, u: Genset) {
                     if (u.onBus) "%.1f kW".format(u.elecKW)
                     else "%.2f Hz".format(u.speederPU * Nominal.FREQ),
                     fontFamily = Mono, fontSize = 20.sp, fontWeight = FontWeight.Bold,
-                    color = Pal.brass,
+                    color = Pal.brass, maxLines = 1,
                 )
                 Slider(
                     value = u.speederPU.toFloat(),
@@ -428,7 +274,8 @@ private fun GovernorControls(host: GameHost, u: Genset) {
             Spacer(Modifier.width(8.dp))
             Text(if (isoch) "ISOCH" else "%.1f%%".format(u.droop * 100),
                 fontFamily = Mono, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                color = if (isoch) Pal.violet else Pal.ink, modifier = Modifier.width(48.dp))
+                color = if (isoch) Pal.violet else Pal.ink, maxLines = 1,
+                modifier = Modifier.width(48.dp))
         }
         Text(
             when {
@@ -467,7 +314,7 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
                 Spacer(Modifier.width(8.dp))
                 Text("%.0f V".format(u.avrSetpointPU * Nominal.GEN_VOLTS),
                     fontFamily = Mono, fontSize = 12.sp, color = Pal.ink,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.width(50.dp))
+                    fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(50.dp))
             }
             Text(
                 if (u.spec.varShare)
@@ -494,7 +341,7 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 LegendPlate("Field  ${"%.0f".format(u.fieldRheostat * 100)}%")
                 Text("open circuit %.0f V".format(u.emfPU * Nominal.GEN_VOLTS),
-                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint)
+                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint, maxLines = 1)
             }
             Text(
                 if (u.onBus)
@@ -507,53 +354,23 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
     }
 }
 
-// ---------------------------------------------------------- the full numbers
+// --------------------------------------------------------- electrical detail
 
 @Composable
-private fun Detail(u: Genset) {
-    var open by rememberSaveable { mutableStateOf(false) }
-    PanelCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            LegendPlate("Instrumentation", Modifier.weight(1f), wide = true)
-            PanelButton(if (open) "HIDE" else "SHOW", small = true) { open = !open }
-        }
-        if (open) {
-            Spacer(Modifier.height(7.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Readout("Real power", "%.1f kW".format(u.elecKW), colour = Pal.brass)
-                    Readout("Reactive", "%.1f kVAr".format(u.kvar), colour = Pal.violet)
-                    Readout("Apparent", "%.1f kVA".format(u.kva))
-                    Readout("Power factor", "%.3f %s".format(abs(u.powerFactor),
-                        if (u.kvar >= 0) "lag" else "lead"))
-                    Readout("Stator current", "%.0f%% rated".format(u.ampsPU * 100),
-                        colour = if (u.ampsPU > 1.0) Pal.red else Pal.ink)
-                    Readout("Terminal volts", "%.0f V".format(u.terminalVoltsPU * Nominal.GEN_VOLTS))
-                    Readout("Line volts", "%,.0f V".format(u.terminalVoltsPU * Nominal.LINE_VOLTS))
-                    Readout("Service", "%.0f-0-%.0f V".format(
-                        u.terminalVoltsPU * Nominal.SERVICE_HALF,
-                        u.terminalVoltsPU * Nominal.SERVICE_HALF))
-                }
-                Column(Modifier.weight(1f)) {
-                    Readout("Shaft power", "%.1f kW".format(u.brakeKW))
-                    Readout("Fuel rate", "%.2f L/h".format(
-                        u.fuelRateKgS * 3600.0 / EngineBase.FUEL_DENSITY))
-                    Readout("Specific fuel",
-                        if (u.elecKW > 1.0) "%.3f kg/kWh".format(u.fuelRateKgS * 3600.0 / u.elecKW)
-                        else "--")
-                    Readout("Air/fuel", if (u.afr < 98) "%.1f : 1".format(u.afr) else "--",
-                        colour = if (u.smokeExcess > 0.05) Pal.amber else Pal.ink)
-                    Readout("Exhaust", "%.0f °C".format(u.egtC))
-                    Readout("Oil temp", "%.0f °C".format(u.oilC))
-                    Readout("Stator temp", "%.0f °C".format(u.windingC),
-                        colour = if (u.windingC > u.spec.windingLimitC) Pal.red else Pal.ink)
-                    Readout("Peak cylinder", "%.0f bar".format(u.peakCylBar),
-                        colour = if (u.peakCylBar > u.spec.gasketLimitBar) Pal.red else Pal.ink)
-                    if (u.recoveredHeatKW > 0.01) {
-                        Readout("Heat sold", "%.1f kW".format(u.recoveredHeatKW), colour = Pal.brass)
-                    }
-                }
-            }
-        }
+private fun ElectricalReadout(u: Genset) {
+    PanelCard("Metering") {
+        Readout("Real power", "%.1f kW".format(u.elecKW), colour = Pal.brass)
+        Readout("Reactive", "%.1f kVAr".format(u.kvar), colour = Pal.violet)
+        Readout("Apparent", "%.1f kVA of %.0f".format(u.kva, u.spec.ratedKVA),
+            colour = if (u.kva > u.spec.ratedKVA) Pal.red else Pal.ink)
+        Readout("Power factor", "%.3f %s".format(abs(u.powerFactor),
+            if (u.kvar >= 0) "lag" else "lead"))
+        Readout("Stator current", "%.0f%% rated".format(u.ampsPU * 100),
+            colour = if (u.ampsPU > 1.0) Pal.red else Pal.ink)
+        Readout("Frequency", "%.2f Hz".format(u.freqHz))
+        Readout("Terminal volts", "%.0f V".format(u.terminalVoltsPU * Nominal.GEN_VOLTS))
+        Readout("Primary line", "%,.0f V".format(u.terminalVoltsPU * Nominal.LINE_VOLTS))
+        Readout("Customer service", "%.0f-0-%.0f V".format(
+            u.terminalVoltsPU * Nominal.SERVICE_HALF, u.terminalVoltsPU * Nominal.SERVICE_HALF))
     }
 }

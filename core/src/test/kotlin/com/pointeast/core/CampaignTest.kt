@@ -114,6 +114,9 @@ class CampaignTest {
                         // Held down on purpose: fit the upgrade now.
                         if (sim.buyTech(pendingJob!!).startsWith("Fitted")) techBought++
                         pendingJob = null
+                    } else if (u.batterySoC < 0.30) {
+                        // Cold iron and a flat battery will not turn over.
+                        sim.chargeBattery(u.id)
                     } else if (sim.fuelL > 100) {
                         sim.startUnit(u.id)
                     }
@@ -425,6 +428,109 @@ class CampaignTest {
         assertTrue("the other stations should already be carrying the city",
             s.stationKW > s.cityDemandKW * 0.85)
         assertTrue("and the player starts with nothing on the bus", s.playerKW < 0.01)
+    }
+
+    @Test
+    fun `the founding machine is cold soaked on day one`() {
+        val sim = Sim(2024)
+        val u = sim.foundingSet
+        assertEquals("it should be at ambient, not a convenient temperature",
+            sim.grid.ambientC, u.coolantC, 0.01)
+        assertEquals(sim.grid.ambientC, u.oilC, 0.01)
+        assertTrue("a January morning on the flats is cold, was %.1f C".format(u.coolantC),
+            u.coolantC < 14.0)
+        assertTrue("and it is stopped", !u.isRunning)
+        assertTrue("on a battery nobody has looked after", u.batterySoC < 0.7)
+        assertTrue("with thirty thousand hours on it", u.runHours > 30_000.0)
+    }
+
+    /**
+     * The single most important property in the game: a new career must be
+     * playable from the first screen. The machine is cold soaked on a January
+     * morning with a battery nobody has looked after, which is meant to be a
+     * fight -- but it must be a fight you can win with what is in front of you.
+     */
+    @Test
+    fun `a new career can actually get its engine running`() {
+        val sim = Sim(20260811)
+        val u = sim.foundingSet
+        println("day one: ambient %.1f C, block %.1f C, battery %.0f%%, cash %s"
+            .format(sim.grid.ambientC, u.coolantC, u.batterySoC * 100, sim.money(sim.cash)))
+
+        // Try it the way a player will: press start and see what happens.
+        sim.startUnit("g1")
+        repeat(900) { sim.update(0.05) }
+        val startedCold = u.isRunning
+        println("  straight off the pad: running=$startedCold battery=%.0f%%"
+            .format(u.batterySoC * 100))
+
+        if (!startedCold) {
+            // The board tells you the battery is down and offers the charger.
+            assertEquals("Charged", sim.chargeBattery("g1"))
+            sim.startUnit("g1")
+            repeat(1500) { sim.update(0.05) }
+            println("  after a charge: running=${u.isRunning} battery=%.0f%%"
+                .format(u.batterySoC * 100))
+        }
+
+        if (!u.isRunning) {
+            // Failing that, the block heater is affordable on day one.
+            assertTrue("the block heater must be affordable at the start",
+                NODE_BY_ID.getValue("recov1").cost < sim.cash)
+            assertTrue(sim.buyTech("recov1").startsWith("Fitted"))
+            sim.chargeBattery("g1")
+            sim.startUnit("g1")
+            repeat(3000) { sim.update(0.05) }
+            println("  with the block heater: running=${u.isRunning}")
+        }
+
+        assertTrue("a new career must be able to start its only machine", u.isRunning)
+    }
+
+    @Test
+    fun `a cold engine is harder to start than a warm one`() {
+        data class Attempt(val running: Boolean, val battery: Double, val rpm: Double)
+        fun attempt(blockC: Double, heater: Boolean = false): Attempt {
+            val sim = Sim(88)
+            val u = sim.foundingSet
+            u.coolantC = blockC; u.oilC = blockC
+            u.batterySoC = 0.85
+            if (heater) u.spec = u.spec.copy(blockHeater = true)
+            sim.startUnit("g1")
+            repeat(700) { sim.update(0.05) }      // 35 s of trying
+            return Attempt(u.isRunning, u.batterySoC, u.rpm)
+        }
+
+        val cold = attempt(-6.0)
+        val warm = attempt(55.0)
+        val heated = attempt(-6.0, heater = true)
+        println("cold  -6 C : running=%s battery=%.2f rpm=%.0f"
+            .format(cold.running, cold.battery, cold.rpm))
+        println("warm  55 C : running=%s battery=%.2f rpm=%.0f"
+            .format(warm.running, warm.battery, warm.rpm))
+        println("heated-6 C : running=%s battery=%.2f rpm=%.0f"
+            .format(heated.running, heated.battery, heated.rpm))
+
+        assertTrue("a warm engine must start", warm.running)
+        assertTrue("the block heater must rescue a cold morning", heated.running)
+        assertTrue("cold cranking must cost more battery than warm",
+            cold.battery < warm.battery - 0.01)
+    }
+
+    @Test
+    fun `a flat battery can always be recovered`() {
+        val sim = Sim(3)
+        val u = sim.foundingSet
+        u.batterySoC = 0.01
+        sim.startUnit("g1")
+        repeat(200) { sim.update(0.05) }
+        assertTrue("a flat battery will not turn the engine", !u.isRunning)
+
+        val msg = sim.chargeBattery("g1")
+        println("battery recovery: $msg -> %.0f%%".format(u.batterySoC * 100))
+        assertEquals("Charged", msg)
+        assertTrue("and it comes back full", u.batterySoC > 0.95)
+        assertTrue("without bankrupting anybody", sim.cash > Econ.STARTING_CASH - 50.0)
     }
 
     @Test

@@ -21,12 +21,29 @@ class PhysicsTest {
         repeat(steps) { sim.update(realDt) }
     }
 
+    /**
+     * Start the founding set from cold, the way the game requires: the machine
+     * is cold soaked with a half-flat battery on day one and will not fire
+     * until the battery has been on charge.
+     */
+    private fun coldStart(sim: Sim): Genset {
+        val u = sim.foundingSet
+        sim.chargeBattery(u.id)
+        sim.startUnit(u.id)
+        runSim(sim, 60.0)
+        if (!u.isRunning) {
+            // A second go, as a player would.
+            sim.chargeBattery(u.id)
+            sim.startUnit(u.id)
+            runSim(sim, 60.0)
+        }
+        assertTrue("engine should be running, was ${u.runState}", u.isRunning)
+        return u
+    }
+
     /** Bring Set 1 up, on the bus, and loaded. Returns the unit. */
     private fun bringOnLine(sim: Sim, targetKW: Double = 40.0): Genset {
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 40.0)
-        assertTrue("engine should be running, was ${u.runState}", u.isRunning)
+        val u = coldStart(sim)
 
         // Warm it before loading, the way you would.
         sim.changeTimeScale(15)
@@ -205,9 +222,7 @@ class PhysicsTest {
     @Test
     fun `the breaker refuses to close outside three rpm and five degrees`() {
         val sim = Sim(9001)
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 45.0)
+        val u = coldStart(sim)
         u.fieldRheostat = 0.62
         runSim(sim, 30.0)
         // Match volts so only speed and phase are in question.
@@ -316,9 +331,7 @@ class PhysicsTest {
     @Test
     fun `the synchroscope gates a bad close`() {
         val sim = Sim(5150)
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 45.0)
+        val u = coldStart(sim)
         u.fieldRheostat = 0.62
         runSim(sim, 20.0)
 
@@ -339,9 +352,7 @@ class PhysicsTest {
     @Test
     fun `a clean close is gentle`() {
         val sim = Sim(2718)
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 45.0)
+        val u = coldStart(sim)
         u.fieldRheostat = 0.62
         runSim(sim, 30.0)
 
@@ -405,9 +416,7 @@ class PhysicsTest {
     @Test
     fun `overspeed destroys the engine`() {
         val sim = Sim(8080)
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 45.0)
+        val u = coldStart(sim)
         u.rpm = EngineBase.OVERSPEED_TRIP_RPM + 60.0
         repeat(20) { sim.update(0.05) }
         assertEquals(RunState.FAILED, u.runState)
@@ -417,9 +426,7 @@ class PhysicsTest {
     @Test
     fun `losing oil pressure shuts the engine down`() {
         val sim = Sim(606)
-        val u = sim.foundingSet
-        sim.startUnit("g1")
-        runSim(sim, 45.0)
+        val u = coldStart(sim)
         assertTrue(u.isRunning)
         u.wear.bearings = 0.97        // worn out: no oil pressure left
         u.oilC = 130.0

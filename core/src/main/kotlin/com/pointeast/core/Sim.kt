@@ -98,7 +98,13 @@ class Sim(seed: Int = 20260811) {
         first.radiatorFouling = 0.48
         first.oilCondition = 0.52
         first.batterySoC = 0.62
-        first.coolantC = 6.0; first.oilC = 6.0; first.windingC = 6.0
+        // Cold soaked. It has been sat on the pad since the low-loader left,
+        // so it is at whatever the desert night got down to, not at some
+        // convenient starting temperature.
+        grid.updateWeather(gameSeconds)
+        first.coolantC = grid.ambientC
+        first.oilC = grid.ambientC
+        first.windingC = grid.ambientC
         units += first
         grid.primeAtStart(gameSeconds, 0.0)
         market.refresh(currentDay(), plant, campaign.reputation)
@@ -447,6 +453,27 @@ class Sim(seed: Int = 20260811) {
      * ran itself dry with a thousand dollars in the bank. Nobody has ever been
      * refused two hundred litres of diesel for having too small a tanker.
      */
+    /**
+     * Put the starting battery on charge. Cheap, but it costs you the hours,
+     * and on a cold morning those are the hours the engine is getting colder.
+     * Without this a run of failed cold starts could leave a career with a
+     * flat battery, no way to turn the engine, and no way to earn.
+     */
+    fun chargeBattery(unitId: String): String {
+        val u = units.find { it.id == unitId } ?: return "No such unit"
+        if (u.isRunning) return "It charges itself while it is running"
+        if (u.batterySoC > 0.95) return "Battery is charged"
+        val cost = 18.0
+        if (cost > cash) return "Not enough cash"
+        cash -= cost
+        val hours = 2.5 * (1.0 - u.batterySoC)
+        fastForwardHours(hours)
+        u.batterySoC = 1.0
+        postLedger("Battery charge -- ${u.spec.name}", -cost, "maintenance")
+        logMsg("${u.spec.name}: battery on charge for %.1f h.".format(hours), LogLevel.INFO)
+        return "Charged"
+    }
+
     fun buyFuel(litres: Double): String {
         val space = plant.fuelTankL - fuelL
         if (space <= 1.0) return "Tank is full"

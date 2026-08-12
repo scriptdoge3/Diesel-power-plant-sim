@@ -67,11 +67,17 @@ private fun BoardScroll(content: @Composable () -> Unit) {
 fun ControlRoomBoard(host: GameHost) {
     var tab by rememberSaveable { mutableStateOf(0) }
     Column {
-        BoardTabs(listOf("Panel", "Machines", "Log"), tab) { tab = it }
-        when (tab) {
-            0 -> PanelScreen(host)              // brings its own scroll
-            1 -> BoardScroll { MachineList(host) }
-            else -> BoardScroll { LogTab(host) }
+        // Switchboard and engine board are separate panels in a real station,
+        // and separating them here keeps each one short enough to read on a
+        // phone without scrolling past the control you came for.
+        BoardTabs(listOf("Switchboard", "Engine", "Machines", "Log"), tab) { tab = it }
+        BoardScroll {
+            when (tab) {
+                0 -> PanelScreen(host)
+                1 -> EngineBoard(host)
+                2 -> MachineList(host)
+                else -> LogTab(host)
+            }
         }
     }
 }

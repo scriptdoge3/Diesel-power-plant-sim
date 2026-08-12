@@ -245,7 +245,10 @@ class Genset(
                     starterEngaged = false; runState = RunState.STOPPED; return
                 }
                 // Starter torque falls off with speed and with a weak battery.
-                val starterTorque = 420.0 * (batterySoC / 0.8).clamp(0.15, 1.15) *
+                // Starter and battery bank are sized to the engine they have to
+                // turn, so a 27 litre V12 is no harder to crank than this one.
+                val starterSize = 420.0 * (spec.displacementL / 7.6)
+                val starterTorque = starterSize * (batterySoC / 0.8).clamp(0.15, 1.15) *
                     (1.0 - (rpm / (EngineBase.CRANK_RPM * 1.6)).clamp(0.0, 0.95))
                 val drag = frictionTorque() + compressionDragTorque()
                 val omega = rpm * 2 * PI / 60.0
@@ -296,16 +299,31 @@ class Genset(
         }
     }
 
-    /** Cold engines need more speed before they will fire. */
+    /**
+     * How much faster than its warm firing speed a cold engine has to be turned
+     * before it will light.
+     *
+     * An indirect injection diesel relies on compression heat alone, and a cold
+     * block draws that heat straight out of the charge. Below freezing this
+     * engine wants to be spun almost twice as fast as it does warm, which is
+     * more than a tired battery will manage on the third attempt. That is the
+     * whole argument for the block heater, and for not letting it get cold.
+     */
     private fun coldStartPenalty(env: Env): Double {
-        val t = if (spec.blockHeater) maxOf(coolantC, 38.0) else coolantC
+        val t = if (spec.blockHeater) maxOf(coolantC, 40.0) else coolantC
         return when {
-            t > 30.0 -> 0.82
-            t > 5.0 -> remap(t, 5.0, 30.0, 1.05, 0.82)
-            t > -12.0 -> remap(t, -12.0, 5.0, 1.55, 1.05)
-            else -> 1.9
+            t > 40.0 -> 0.80
+            t > 20.0 -> remap(t, 20.0, 40.0, 0.95, 0.80)
+            t > 0.0 -> remap(t, 0.0, 20.0, 1.75, 0.95)
+            t > -15.0 -> remap(t, -15.0, 0.0, 2.60, 1.75)
+            else -> 3.0
         }
     }
+
+    /** True while the engine is too cold to fire at the speed it is turning. */
+    val tooColdToFire: Boolean
+        get() = runState == RunState.CRANKING &&
+            rpm < EngineBase.FIRE_RPM * coldStartPenalty(Env(coolantC, 0.0)) * 0.98
 
     fun requestStart() {
         if (runState == RunState.STOPPED || runState == RunState.COOLDOWN) {
@@ -562,9 +580,23 @@ class Genset(
         return fmepBar * 1e5 * spec.sweptPerRevM3 / (2 * PI)
     }
 
-    /** Extra drag from pumping against compression while cranking. */
-    private fun compressionDragTorque(): Double =
-        if (rpm < EngineBase.CRANK_RPM * 2) 34.0 * (1.0 - rpm / (EngineBase.CRANK_RPM * 3)) else 0.0
+    /**
+     * Torque absorbed compressing air, which is what a starter is really
+     * fighting -- not friction.
+     *
+     * Compressing 1.27 litres from atmospheric through a ratio of 17 takes
+     * about 600 J, and on a cold engine only some of that comes back on the
+     * expansion stroke because the heat goes into the cold iron. Three
+     * cylinders compress per revolution on a six, so the average is somewhere
+     * near 90 Nm on this engine and it scales with displacement. Turning
+     * faster gives the charge less time to lose its heat, so more of the work
+     * is returned and the drag falls away as the engine picks up speed.
+     */
+    private fun compressionDragTorque(): Double {
+        val perLitre = 95.0 / 7.6
+        val recovery = (1.0 - rpm / 1400.0).coerceAtLeast(0.15)
+        return perLitre * spec.displacementL * recovery
+    }
 
     private fun parasiticKW(): Double = parasiticKWAt(rpm)
 
@@ -576,7 +608,12 @@ class Genset(
         return spec.fanKW * fanFrac + pumpKW + EngineBase.FIELD_KW * fieldPU * fieldPU
     }
 
-    private fun viscosityFactor(): Double = (1.9 - 0.009 * oilC).clamp(0.55, 1.8)
+    /**
+     * Oil viscosity relative to its value at 100 C. Roughly exponential in
+     * temperature, which is why a cold engine drags so hard on the starter and
+     * why the oil pressure gauge sits on the stop until it warms through.
+     */
+    private fun viscosityFactor(): Double = exp(-0.021 * (oilC - 100.0)).clamp(0.55, 4.0)
 
     // --------------------------------------------------------------- speed
 
