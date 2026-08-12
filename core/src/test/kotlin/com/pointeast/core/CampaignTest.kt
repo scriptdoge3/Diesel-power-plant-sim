@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -6,16 +6,37 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
+ * The order a competent operator would buy things in. Cheap efficiency
+ * first, then whichever component is actually capping the machine, then
+ * the plant that lets it grow past one engine. Anything not listed is
+ * appended, so the plan always terminates.
+ */
+private val BUILD_ORDER: List<String> = (listOf(
+    "cool1", "fuel1", "air1", "elec1", "recov1",
+    "mech1", "ctrl1", "elec2", "mech2", "air2",
+    "elec3",                       // the alternator is the first ceiling
+    "fuel2", "cool2", "air3", "fuel3", "cool3", "mech3",
+    "plant1",                      // switchgear: a second machine
+    "elec4", "mech4", "elec5",     // 190 kVA frame
+    "fuel4", "air4", "mech5", "cool4",
+    "ctrl2", "ctrl3", "ctrl4", "ctrl5",
+    "plant2", "plant3", "plant4", "plant5", "plant6", "plant7", "plant8",
+    "recov2", "recov4", "air5", "fuel5", "ctrl6", "ctrl7",
+    "cool5", "recov3", "air6", "fuel6",
+) + NODES.map { it.id }).distinct()
+
+/**
  * Drives the simulation through the same command surface the app's screens
- * call, with a scripted operator standing in for the player. If a career can
- * be played to the megawatt here, it can be played on the phone.
+ * call, with a scripted operator standing in for the player.
  */
 class CampaignTest {
 
     /**
-     * A competent but unimaginative operator: keeps fuel in the tank, keeps
+     * A competent operator: keeps fuel in the tank, keeps machines running and
+     * synchronised, trims the field, answers dispatch it can carry, services
+     * what is overdue, and works down a build order: keeps fuel in the tank, keeps
      * machines running and synchronised, answers dispatch, services what is
-     * overdue, and spends spare cash on the cheapest thing it can fit.
+     * saving for the expensive unlocks rather than frittering the money.
      */
     private class Operator(val sim: Sim) {
         var techBought = 0
@@ -30,7 +51,7 @@ class CampaignTest {
         var onBusTicks = 0
         var runTicks = 0
         private var n = 0
-        /** Set while deliberately holding Unit 8 down for a job. */
+        /** Set while deliberately holding Set 1 down for a job. */
         private var pendingJob: String? = null
 
         fun tick() {
@@ -63,7 +84,7 @@ class CampaignTest {
         private fun operate(u: Genset) {
             when {
                 u.runState == RunState.FAILED -> {
-                    if (u.isUnit8 && !wasFailed) {
+                    if (u.isFoundingSet && !wasFailed) {
                         failures++
                         wasFailed = true
                         if (firstFailureDay < 0) firstFailureDay = sim.gameSeconds / 86400.0
@@ -75,14 +96,14 @@ class CampaignTest {
                     if (sim.doRepair(u.id, key) == "Done") repairsDone++
                 }
                 !u.isRunning -> {
-                    if (u.isUnit8) wasFailed = false
+                    if (u.isFoundingSet) wasFailed = false
                     // Do overdue maintenance while it is already stopped. Oil is
                     // cheap and skipping it is what kills bearings, so it is not
                     // gated on having spare cash.
                     val overdue = CONSUMABLES.firstOrNull { u.service.get(it.key) > it.intervalH }
                     if (overdue != null && (overdue.key == "oil" || sim.cash > 3000)) {
                         if (sim.doService(u.id, overdue.key) == "Done") servicesDone++
-                    } else if (u.isUnit8 && pendingJob != null) {
+                    } else if (u.isFoundingSet && pendingJob != null) {
                         // Held down on purpose: fit the upgrade now.
                         if (sim.buyTech(pendingJob!!).startsWith("Fitted")) techBought++
                         pendingJob = null
@@ -118,10 +139,25 @@ class CampaignTest {
                     // so the response does not depend on the tick rate.
                     val hot = u.coolantC > EngineBase.COOLANT_WARN_C - 4 ||
                         u.egtC > EngineBase.EGT_WARN_C - 20 || u.smokeExcess > 0.05
-                    val target = if (hot) u.elecKW * 0.90 else u.spec.ratedKW * 0.82
+                    val overKva = u.kva > u.spec.ratedKVA * 0.98
+                    val target = when {
+                        hot || overKva -> u.elecKW * 0.90
+                        else -> u.spec.ratedKW * 0.82
+                    }
                     val err = (target - u.elecKW) / u.spec.ratedKW
                     u.speederPU = (u.speederPU + (err * 0.02).clamp(-0.004, 0.004))
                         .clamp(0.95, 1.10)
+
+                    // Trim the field to hold something near rated power factor.
+                    // On a hand rheostat this is a standing job: leave it where
+                    // it was at synchronising and the machine quietly ends up
+                    // carrying everyone else's reactive load.
+                    if (!u.spec.avr) {
+                        val wantKvar = u.elecKW * 0.5
+                        val e = (u.kvar - wantKvar) / u.spec.ratedKVA
+                        u.fieldRheostat = (u.fieldRheostat - (e * 0.06).clamp(-0.008, 0.008))
+                            .clamp(0.0, 1.0)
+                    }
                 }
             }
         }
@@ -144,7 +180,7 @@ class CampaignTest {
             // Never spend the plant into a state where it cannot repair itself.
             val float = 4500.0
 
-            // A machine is usually worth more than the next small upgrade.
+            // A machine is worth more than any upgrade once there is a slot.
             if (sim.plant.hasSwitchgear && sim.units.size < sim.plant.unitSlots) {
                 val best = sim.market.listings
                     .filter { it.kW <= sim.plant.maxUnitKW && it.condition > 0.45 }
@@ -156,22 +192,23 @@ class CampaignTest {
                 }
             }
 
-            val available = NODES
-                .filter { it.id !in sim.ownedTech && isUnlockable(it, sim.ownedTech) }
-                .filter { it.cost + float < sim.cash }
-            // Capacity first: the plant branch is what makes the megawatt
-            // possible at all, so take it whenever it is within reach.
-            val next = available.filter { it.branch == "plant" }.minByOrNull { it.cost }
-                ?: available.filter { it.branch == "ctrl" }.minByOrNull { it.cost }
-                ?: available.minByOrNull { it.cost }
+            // Work down the build order. If the next thing on the list is not
+            // affordable yet, save for it rather than frittering the money on
+            // whatever happens to be cheap -- otherwise the plant never gets
+            // past the first alternator rewind.
+            val next = BUILD_ORDER
+                .asSequence()
+                .mapNotNull { NODE_BY_ID[it] }
+                .firstOrNull { it.id !in sim.ownedTech && isUnlockable(it, sim.ownedTech) }
                 ?: return
+            if (next.cost + float > sim.cash) return
 
             // Machine work needs the machine down; stop it, buy, restart next tick.
             val needsShutdown = next.branch !in listOf("ctrl", "plant", "recov")
-            if (needsShutdown && sim.unit8.isRunning) {
+            if (needsShutdown && sim.foundingSet.isRunning) {
                 pendingJob = next.id
-                if (sim.unit8.onBus) sim.openBreaker("u8")
-                sim.stopUnit("u8")
+                if (sim.foundingSet.onBus) sim.openBreaker("g1")
+                sim.stopUnit("g1")
                 return
             }
             if (sim.buyTech(next.id).startsWith("Fitted")) techBought++
@@ -225,8 +262,8 @@ class CampaignTest {
                 sim.units.size, sim.ownedTech.size, NODES.size, sim.campaign.reputation,
             )
         )
-        println("   unit8 rating %.0f kW, peak delivered %.0f kW, %,.0f kWh lifetime".format(
-            sim.unit8.spec.ratedKW, sim.campaign.peakDeliveredKW, sim.campaign.totalDeliveredKWh))
+        println("   foundingSet rating %.0f kW, peak delivered %.0f kW, %,.0f kWh lifetime".format(
+            sim.foundingSet.spec.ratedKW, sim.campaign.peakDeliveredKW, sim.campaign.totalDeliveredKWh))
         println("   on bus %.0f%% / running %.0f%% of the time; %d failures, %d repairs, %d services, %d syncs"
             .format(op.onBusTicks * 100.0 / (op.runTicks + 1), op.runTicks * 100.0 / 480000.0,
                 op.failures, op.repairsDone, op.servicesDone, op.syncAttempts))
@@ -257,8 +294,8 @@ class CampaignTest {
         assertTrue("should have bought machines, got ${sim.units.size}", sim.units.size >= 2)
         assertTrue("should have most of the tech tree, got ${sim.ownedTech.size}/${NODES.size}",
             sim.ownedTech.size > NODES.size / 2)
-        assertTrue("Unit 8 should be uprated near its ceiling, got %.0f kW"
-            .format(sim.unit8.spec.ratedKW), sim.unit8.spec.ratedKW > 120.0)
+        assertTrue("Set 1 should be uprated near its ceiling, got %.0f kW"
+            .format(sim.foundingSet.spec.ratedKW), sim.foundingSet.spec.ratedKW > 120.0)
         assertTrue("should have cleared most milestones, got ${sim.campaign.completed.size}",
             sim.campaign.completed.size >= 6)
         // A well-run plant should not be destroying engines. Wear is supposed
@@ -333,22 +370,22 @@ class CampaignTest {
     fun `every command is safe to call at any time`() {
         val sim = Sim(11)
         // Fire everything at a stopped, cold, unupgraded plant.
-        sim.stopUnit("u8"); sim.openBreaker("u8"); sim.closeBreaker("u8")
-        sim.emergencyStop("u8"); sim.adjustSpeeder("u8", 5.0); sim.setDroop("u8", -1.0)
-        sim.setField("u8", 9.0); sim.setAvrSetpoint("u8", -3.0); sim.setPrelube("u8", true)
+        sim.stopUnit("g1"); sim.openBreaker("g1"); sim.closeBreaker("g1")
+        sim.emergencyStop("g1"); sim.adjustSpeeder("g1", 5.0); sim.setDroop("g1", -1.0)
+        sim.setField("g1", 9.0); sim.setAvrSetpoint("g1", -3.0); sim.setPrelube("g1", true)
         sim.selectUnit("nope"); sim.stopUnit("nope"); sim.openBreaker("nope")
         sim.buyTech("nonexistent"); sim.buyMachine("nonexistent")
-        sim.doService("nope", "oil"); sim.doService("u8", "nope")
-        sim.doRepair("nope", "bearings"); sim.doRepair("u8", "nope")
-        sim.sellMachine("u8"); sim.acceptOrder("nope"); sim.declineOrder("nope")
+        sim.doService("nope", "oil"); sim.doService("g1", "nope")
+        sim.doRepair("nope", "bearings"); sim.doRepair("g1", "nope")
+        sim.sellMachine("g1"); sim.acceptOrder("nope"); sim.declineOrder("nope")
         sim.buyFuel(-50.0); sim.buyFuel(1e9); sim.changeTimeScale(99999)
         repeat(200) { sim.update(0.05) }
 
         assertTrue(sim.cash.isFinite())
-        assertEquals("Unit 8 must survive all of that", 1, sim.units.size)
-        assertTrue(sim.unit8.speederPU <= GovernorBase.SPEEDER_MAX)
-        assertTrue(sim.unit8.droop >= sim.unit8.spec.droopMin)
-        assertTrue(sim.unit8.fieldRheostat in 0.0..1.0)
+        assertEquals("Set 1 must survive all of that", 1, sim.units.size)
+        assertTrue(sim.foundingSet.speederPU <= GovernorBase.SPEEDER_MAX)
+        assertTrue(sim.foundingSet.droop >= sim.foundingSet.spec.droopMin)
+        assertTrue(sim.foundingSet.fieldRheostat in 0.0..1.0)
         assertTrue("fuel must not exceed the tank", sim.fuelL <= sim.plant.fuelTankL + 1e-6)
         assertTrue("cash must not have been spent on nothing", sim.cash <= Econ.STARTING_CASH)
     }

@@ -1,4 +1,4 @@
-package com.portannika.app.ui
+package com.pointeast.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -27,10 +27,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.portannika.app.GameHost
-import com.portannika.core.LogLevel
-import com.portannika.core.MILESTONES
-import com.portannika.core.calendarOf
+import com.pointeast.app.GameHost
+import com.pointeast.core.LogLevel
+import com.pointeast.core.MILESTONES
+import com.pointeast.core.calendarOf
 
 private enum class OfficeTab { CAREER, LEDGER, LOG }
 

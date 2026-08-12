@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.abs
 import kotlin.math.exp

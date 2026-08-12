@@ -1,33 +1,39 @@
-package com.portannika.core
+package com.pointeast.core
 
 /* ============================================================================
- *  PORT ANNIKA MUNICIPAL POWER -- plant, grid and career constants
+ *  POINT EAST ELECTRICAL  --  Dry Green City
  * ----------------------------------------------------------------------------
- *  Port Annika is an isolated coastal town. There is no intertie: whatever the
- *  station makes is what the town gets. The system was built around a 90 Hz
- *  standard, inherited from the original cannery's own plant, which means every
- *  generator here turns 1800 rpm on a 6-pole rotor instead of the 1200 rpm a
- *  60 Hz 6-pole set would.
+ *  The world did end, more or less, and then it carried on. Cities that still
+ *  stand run their own grids because there is nothing left to tie them to.
+ *  Dry Green City is one of them: seven privately owned generating stations,
+ *  no intertie, and whatever the stations make is what the city gets.
+ *
+ *  The grid standard here is 90 Hz. Nobody alive remembers deciding that. It
+ *  means a 6-pole machine turns 1800 rpm:
  *
  *      f = rpm * poles / 120   ->   1800 * 6 / 120 = 90 Hz
  *
- *  Generation is at 480 V three-phase inside the plant. The station step-up
- *  bank takes that to the 7200 V three-phase primary that runs out to the town.
- *  Pole-top distribution transformers drop 7200 V to a 360 V winding with a
- *  grounded center tap, giving customers 180-0-180 split phase: 180 V for
- *  lighting and receptacles, 360 V for ranges, pumps and the cannery motors.
+ *  Generation is at 480 V three-phase in the plant. The station step-up bank
+ *  takes it to the 7200 V three-phase primary, and pole transformers drop that
+ *  to a 360 V winding with a grounded centre tap, giving 180-0-180 split phase
+ *  at the customer: 180 V for lights and outlets, 360 V for ranges, pumps and
+ *  shop motors.
  *
- *  You own Unit 8. The career ends when you own the first megawatt.
+ *  Sector E -- Point East -- is the newest part of the city and the worst
+ *  served. The dirt out there is dry and dead, so nothing gets built, so
+ *  nobody ran decent copper to it, so it browns out several times a month, so
+ *  nothing gets built. You and Cal Renner are going to break that circle with
+ *  one heavily used 50 kW diesel and no investors.
  * ========================================================================== */
 
 object Nominal {
-    const val FREQ = 90.0            // Hz, system standard
+    const val FREQ = 90.0            // Hz, grid standard
     const val POLES = 6
     const val RPM = 1800.0           // = FREQ * 120 / POLES
     const val GEN_VOLTS = 480.0      // plant bus, 3-phase
     const val LINE_VOLTS = 7200.0    // primary distribution, 3-phase
     const val SERVICE_VOLTS = 360.0  // secondary, end to end
-    const val SERVICE_HALF = 180.0   // each leg to grounded center tap
+    const val SERVICE_HALF = 180.0   // each leg to grounded centre tap
 
     const val FREQ_BAND = 0.5        // +/- Hz before the quality penalty bites
     const val FREQ_TRIP_HI = 94.5
@@ -38,11 +44,11 @@ object Nominal {
 }
 
 /**
- * Baseline for Unit 8: a Halvorsen-Marsh HM-6.7.6 litre inline six, naturally
- * aspirated, indirect injection, inline jerk pump, flyweight governor with a
- * hand speeder. No regulator on the exciter -- you set the field with a
- * rheostat and watch the voltmeter. It came out of a cannery ice plant and it
- * shows.
+ * The founding machine: a Halvorsen-Marsh HM-6, 7.6 litre inline six, pre-
+ * collapse iron. Naturally aspirated, indirect injection, inline jerk pump,
+ * flyweight governor with a hand speeder, and a rheostat on the exciter. It
+ * spent twenty years driving an ice plant compressor and it shows. A friend
+ * from college had it sitting on a pallet; Cal put up the money.
  */
 object EngineBase {
     const val NAME = "Halvorsen-Marsh HM-6"
@@ -78,7 +84,7 @@ object EngineBase {
     const val OIL_CP = 2000.0
     const val THERMOSTAT_OPEN_C = 79.0
     const val THERMOSTAT_FULL_C = 92.0
-    const val RADIATOR_UA = 800.0   // W/K, full fan, full open
+    const val RADIATOR_UA = 800.0    // W/K, full fan, full open
     const val JACKET_FRAC = 0.28     // of fuel energy into the coolant
     const val EXHAUST_FRAC = 0.30    // of fuel energy out the stack
     const val OIL_COUPLING = 450.0   // W/K, oil circuit to coolant circuit
@@ -127,10 +133,15 @@ object GovernorBase {
     const val SPEEDER_RATE_PU_PER_S = 0.012
 }
 
-/** A co-op unit the player never touches directly. Simplified droop model. */
-data class StationUnitSpec(
+/**
+ * One of the seven stations that already had the city sewn up before you
+ * turned up. You never touch their machines, so they are modelled as droop
+ * characteristics with an AVR and a failure rate, nothing more.
+ */
+data class StationSpec(
     val id: String,
-    val name: String,
+    val company: String,
+    val sector: String,
     val make: String,
     val kW: Double,
     val droop: Double,
@@ -142,19 +153,19 @@ data class StationUnitSpec(
     val priority: Int,         // lower runs first
 )
 
-val STATION_UNITS = listOf(
-    StationUnitSpec("u1", "Unit 1", "Fairbanks-Morse 32E", 120.0, 0.045, 2.4, 30.0, 95.0, 0.262, 1400.0, 3),
-    StationUnitSpec("u2", "Unit 2", "Caterpillar D343", 180.0, 0.040, 1.7, 45.0, 55.0, 0.244, 2100.0, 2),
-    StationUnitSpec("u3", "Unit 3", "Cummins NT-855", 230.0, 0.038, 1.6, 60.0, 48.0, 0.239, 2400.0, 1),
-    StationUnitSpec("u4", "Unit 4", "Detroit 6-71", 90.0, 0.050, 1.2, 22.0, 38.0, 0.288, 900.0, 5),
-    StationUnitSpec("u5", "Unit 5", "Caterpillar 3406B", 280.0, 0.036, 1.8, 70.0, 60.0, 0.231, 3000.0, 0),
-    StationUnitSpec("u6", "Unit 6", "Lister HR6", 30.0, 0.055, 2.9, 6.0, 120.0, 0.305, 1100.0, 7),
-    StationUnitSpec("u7", "Unit 7", "John Deere 6068HF", 75.0, 0.042, 1.3, 18.0, 32.0, 0.255, 2600.0, 4),
+val CITY_STATIONS = listOf(
+    StationSpec("s1", "Kessler Light & Power", "Sector A", "Fairbanks-Morse 38D", 280.0, 0.036, 1.8, 70.0, 60.0, 0.231, 3000.0, 0),
+    StationSpec("s2", "Ardent Generating", "Sector B", "Cummins NT-855", 230.0, 0.038, 1.6, 60.0, 48.0, 0.239, 2400.0, 1),
+    StationSpec("s3", "Tannhauser Bros.", "Sector C", "Caterpillar D343", 180.0, 0.040, 1.7, 45.0, 55.0, 0.244, 2100.0, 2),
+    StationSpec("s4", "Redland Power Co.", "Sector D", "Fairbanks-Morse 32E", 120.0, 0.045, 2.4, 30.0, 95.0, 0.262, 1400.0, 3),
+    StationSpec("s5", "Verrick Electric", "Sector F", "Detroit 6-71", 90.0, 0.050, 1.2, 22.0, 38.0, 0.288, 900.0, 5),
+    StationSpec("s6", "Sixth Street Plant", "Sector G", "John Deere 6068HF", 75.0, 0.042, 1.3, 18.0, 32.0, 0.255, 2600.0, 4),
+    StationSpec("s7", "Ostrow & Sons", "Sector H", "Lister HR6", 30.0, 0.055, 2.9, 6.0, 120.0, 0.305, 1100.0, 7),
 )
 
-object Town {
-    const val NAME = "Port Annika"
-    const val POPULATION = 1180
+object City {
+    const val NAME = "Dry Green City"
+    const val POPULATION = 21400
 
     /** 24-hour shape, multiplier on the day's base load. Index = hour. */
     val DAILY_SHAPE = doubleArrayOf(
@@ -163,28 +174,64 @@ object Town {
         1.02, 1.15, 1.24, 1.22, 1.12, 0.98, 0.82, 0.69,
     )
 
-    const val BASE_KW = 300.0              // mid-shoulder, mild weather
+    /** The seven sectors the other stations already serve. */
+    const val BASE_KW = 300.0
     const val HEAT_KW_PER_DEG_C = 9.4      // added load per degree C below 15
-    const val COOL_KW_PER_DEG_C = 2.1      // above 22, mostly cannery chillers
+    const val COOL_KW_PER_DEG_C = 2.1      // above 22, mostly the packing houses
     const val LOAD_DAMPING_D = 1.6         // % load change per % frequency
     const val CONST_Z_FRAC = 0.42          // rest of the load is constant kW
     const val PF = 0.87
 
-    /** Long-run demand growth once the town believes the lights will stay on. */
-    const val GROWTH_PER_YEAR = 0.06
+    /** Slow background growth in the rest of the city, nothing to do with you. */
+    const val GROWTH_PER_YEAR = 0.03
+}
+
+/**
+ * Sector E. The dirt out there is dry and dead so nothing gets built, so
+ * nobody ran decent copper to it, so it browns out, so nothing gets built.
+ *
+ * The circle breaks the other way too. Every hour Point East gets clean power
+ * from your plant, somebody decides the risk is worth taking: a shop opens, a
+ * well gets a pump, a block gets wired. That is the whole business plan, and
+ * it is the only load in the city that grows because of what you personally do.
+ */
+object PointEast {
+    const val NAME = "Point East"
+    const val SECTOR = "Sector E"
+
+    /** What is out there on day one: a few hundred people and a water lift. */
+    const val BASE_KW = 46.0
+
+    /** What the sector becomes if it is given power it can rely on. */
+    const val DEVELOPED_KW = 620.0
+
+    /** Days of reliable supply to go from nothing built to fully built. */
+    const val DEVELOPMENT_DAYS = 520.0
+
+    /** Confidence lost per hour of being browned out, relative to gained. */
+    const val SETBACK_MULTIPLIER = 26.0
+
+    /**
+     * Point East is at the far end of the worst feeder in the city, so when
+     * the grid runs short it is the first thing the other stations drop.
+     */
+    const val SHED_PRIORITY = 2.6
 }
 
 object Weather {
-    // Coastal subarctic: cold, damp, not extreme. Monthly means, deg C.
-    val MEAN_C = doubleArrayOf(-6.0, -5.0, -2.0, 3.0, 8.0, 12.0, 15.0, 14.0, 10.0, 5.0, -1.0, -5.0)
-    const val SWING_C = 7.0                // daily peak-to-trough
-    const val NOISE_C = 5.5
-    const val BARO_KPA = 101.0
+    // High desert: hot days, cold nights, and it does not rain much.
+    val MEAN_C = doubleArrayOf(4.0, 7.0, 12.0, 17.0, 23.0, 29.0, 32.0, 31.0, 26.0, 18.0, 10.0, 5.0)
+    const val SWING_C = 14.0               // big diurnal swing, dry air
+    const val NOISE_C = 4.5
+    const val BARO_KPA = 96.5              // the city sits high
 }
 
 object Econ {
+    /** What Cal handed you for the generator, less what the generator cost. */
     const val STARTING_CASH = 4200.0
-    const val BASE_RATE_PER_KWH = 0.78     // paid by the co-op at the bus
+
+    /** What the grid authority pays for energy delivered at your bus. */
+    const val BASE_RATE_PER_KWH = 0.63
     const val FUEL_PRICE_PER_L = 0.94
     const val FUEL_TANK_L = 900.0
     const val HEAT_RATE_PER_KWH_TH = 0.071
@@ -194,10 +241,10 @@ object Econ {
     const val FREQ_QUALITY_PENALTY_PER_MIN = 1.8
     const val REP_START = 0.5
 
-    /** Wheeling fee the co-op charges until you build your own step-up bank. */
+    /** Wheeling: you rent someone else's copper until you build your own. */
     const val WHEELING_FRAC = 0.11
 
-    /** Bulk barge discount once you have the fuel farm. */
+    /** Bulk pricing once you have a tank the tanker can fill in one trip. */
     const val BARGE_DISCOUNT = 0.22
 
     fun ratePerKWh(reputation: Double) = BASE_RATE_PER_KWH * (0.82 + 0.36 * reputation)
@@ -238,7 +285,7 @@ val REPAIRS = listOf(
     RepairItem("full", "Full in-frame rebuild", 11800.0, 96.0),
 )
 
-/** Time compression steps offered in the UI. */
+/** Time compression steps offered on the panel. */
 val TIME_SCALES = intArrayOf(1, 2, 5, 15, 60, 300)
 
 /**

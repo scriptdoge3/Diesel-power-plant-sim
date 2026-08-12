@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -21,10 +21,10 @@ class PhysicsTest {
         repeat(steps) { sim.update(realDt) }
     }
 
-    /** Bring Unit 8 up, on the bus, and loaded. Returns the unit. */
+    /** Bring Set 1 up, on the bus, and loaded. Returns the unit. */
     private fun bringOnLine(sim: Sim, targetKW: Double = 40.0): Genset {
-        val u = sim.unit8
-        sim.startUnit("u8")
+        val u = sim.foundingSet
+        sim.startUnit("g1")
         runSim(sim, 40.0)
         assertTrue("engine should be running, was ${u.runState}", u.isRunning)
 
@@ -46,7 +46,7 @@ class PhysicsTest {
             sim.update(0.05)
             val c2 = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
             if (c2.allOk && c2.directionOk) {
-                sim.closeBreaker("u8")
+                sim.closeBreaker("g1")
                 if (u.onBus) break
             }
         }
@@ -66,7 +66,7 @@ class PhysicsTest {
     @Test
     fun `90 Hz comes from 1800 rpm on six poles`() {
         assertEquals(90.0, Nominal.RPM * Nominal.POLES / 120.0, 1e-9)
-        val u = Genset("t", buildUnit8Spec(emptySet()), true)
+        val u = Genset("t", buildFoundingSpec(emptySet()), true)
         u.rpm = 1800.0
         assertEquals(90.0, u.freqHz, 1e-9)
         u.rpm = 1700.0
@@ -74,8 +74,8 @@ class PhysicsTest {
     }
 
     @Test
-    fun `stock Unit 8 is a 50 kW machine limited by its alternator`() {
-        val spec = buildUnit8Spec(emptySet())
+    fun `stock Set 1 is a 50 kW machine limited by its alternator`() {
+        val spec = buildFoundingSpec(emptySet())
         assertEquals(50.0, spec.ratedKW, 0.5)
         assertEquals(62.5, spec.ratedKVA, 0.01)
         // The engine can make a bit more than the alternator can carry.
@@ -86,7 +86,7 @@ class PhysicsTest {
     @Test
     fun `the tech tree roughly triples the machine`() {
         val all = NODES.map { it.id }.toSet()
-        val spec = buildUnit8Spec(all)
+        val spec = buildFoundingSpec(all)
         assertTrue("fully upgraded rating ${spec.ratedKW} should be over 130 kW", spec.ratedKW > 130.0)
         assertTrue("fully upgraded rating ${spec.ratedKW} should stay under 300 kW", spec.ratedKW < 300.0)
         assertTrue(spec.turbo != null)
@@ -159,7 +159,7 @@ class PhysicsTest {
     fun `droop sets the load share between machines`() {
         // Two identical machines at the same speeder setting but different
         // droop should split load inversely to their droop.
-        val spec = buildUnit8Spec(emptySet())
+        val spec = buildFoundingSpec(emptySet())
         val a = Genset("a", spec, true).apply { droop = 0.03; speederPU = 1.04 }
         val b = Genset("b", spec, true).apply { droop = 0.06; speederPU = 1.04 }
         val f = 90.0
@@ -203,8 +203,8 @@ class PhysicsTest {
     @Test
     fun `the synchroscope gates a bad close`() {
         val sim = Sim(5150)
-        val u = sim.unit8
-        sim.startUnit("u8")
+        val u = sim.foundingSet
+        sim.startUnit("g1")
         runSim(sim, 45.0)
         u.fieldRheostat = 0.62
         runSim(sim, 20.0)
@@ -226,8 +226,8 @@ class PhysicsTest {
     @Test
     fun `a clean close is gentle`() {
         val sim = Sim(2718)
-        val u = sim.unit8
-        sim.startUnit("u8")
+        val u = sim.foundingSet
+        sim.startUnit("g1")
         runSim(sim, 45.0)
         u.fieldRheostat = 0.62
         runSim(sim, 30.0)
@@ -254,12 +254,12 @@ class PhysicsTest {
         runSim(sim, 300.0, scale = 5)
         val s = sim.lastSnapshot
         println("f=%.2f Hz  bus=%.0f V  line=%.0f V  service=%.0f V  demand=%.0f kW  gen=%.0f kW"
-            .format(s.frequencyHz, s.busVolts, s.lineVolts, s.serviceVolts, s.townDemandKW, s.totalGenKW))
+            .format(s.frequencyHz, s.busVolts, s.lineVolts, s.serviceVolts, s.cityDemandKW, s.totalGenKW))
         assertTrue("frequency ${s.frequencyHz} should be near 90 Hz", abs(s.frequencyHz - 90.0) < 2.0)
         assertTrue("bus volts ${s.busVolts} should be near 480", abs(s.busVolts - 480.0) < 60.0)
         // The split-phase service is half of 360 either side of the center tap.
         assertEquals(s.serviceVolts / 2.0, s.busVoltsPU * Nominal.SERVICE_HALF, 0.01)
-        assertTrue("the town should be carried", s.totalGenKW > s.townDemandKW * 0.8)
+        assertTrue("the town should be carried", s.totalGenKW > s.cityDemandKW * 0.8)
     }
 
     @Test
@@ -268,7 +268,7 @@ class PhysicsTest {
         runSim(sim, 400.0, scale = 5)
         val fBefore = sim.grid.frequencyHz
         // Trip the biggest machine on the bus.
-        sim.grid.stationUnits.filter { it.online }.maxByOrNull { it.spec.kW }?.stop()
+        sim.grid.stations.filter { it.online }.maxByOrNull { it.spec.kW }?.stop()
         repeat(200) { sim.update(0.05) }
         println("f before=%.2f  f after trip=%.2f".format(fBefore, sim.grid.frequencyHz))
         assertTrue("frequency should dip after losing a unit", sim.grid.frequencyHz < fBefore)
@@ -292,8 +292,8 @@ class PhysicsTest {
     @Test
     fun `overspeed destroys the engine`() {
         val sim = Sim(8080)
-        val u = sim.unit8
-        sim.startUnit("u8")
+        val u = sim.foundingSet
+        sim.startUnit("g1")
         runSim(sim, 45.0)
         u.rpm = EngineBase.OVERSPEED_TRIP_RPM + 60.0
         repeat(20) { sim.update(0.05) }
@@ -304,8 +304,8 @@ class PhysicsTest {
     @Test
     fun `losing oil pressure shuts the engine down`() {
         val sim = Sim(606)
-        val u = sim.unit8
-        sim.startUnit("u8")
+        val u = sim.foundingSet
+        sim.startUnit("g1")
         runSim(sim, 45.0)
         assertTrue(u.isRunning)
         u.wear.bearings = 0.97        // worn out: no oil pressure left
@@ -319,8 +319,8 @@ class PhysicsTest {
     @Test
     fun `boost on the stock head gasket over-pressures the cylinder`() {
         // The turbo node requires the head studs precisely because of this.
-        val withStuds = buildUnit8Spec(setOf("mech1", "mech2", "air1", "air2", "air3"))
-        val withoutStuds = buildUnit8Spec(setOf("air1", "air2"))
+        val withStuds = buildFoundingSpec(setOf("mech1", "mech2", "air1", "air2", "air3"))
+        val withoutStuds = buildFoundingSpec(setOf("air1", "air2"))
         assertTrue("stock gasket limit should be low", withoutStuds.gasketLimitBar < 130.0)
         assertTrue("studded gasket should hold much more", withStuds.gasketLimitBar > 280.0)
         assertTrue("the turbo node must require the head studs", "mech2" in NODE_BY_ID["air3"]!!.req)
@@ -403,7 +403,7 @@ class PhysicsTest {
     }
 
     @Test
-    fun `the town is never left dark while the co-op has capacity`() {
+    fun `the town is never left dark while the grid authority has capacity`() {
         val sim = Sim(555)
         sim.changeTimeScale(60)
         var blackoutTicks = 0
@@ -412,7 +412,7 @@ class PhysicsTest {
             if (sim.lastSnapshot.blackout) blackoutTicks++
         }
         println("blackout ticks: $blackoutTicks of 30000")
-        assertTrue("the co-op should keep the lights on by itself", blackoutTicks < 600)
+        assertTrue("the grid authorityhould keep the lights on by itself", blackoutTicks < 600)
     }
 
     // -------------------------------------------------------------- campaign
@@ -422,10 +422,10 @@ class PhysicsTest {
         // Buy the whole tree, then check the plant can physically hold 1 MW.
         val all = NODES.map { it.id }.toSet()
         val plant = buildPlantSpec(all)
-        val unit8 = buildUnit8Spec(all)
-        println("slots=${plant.unitSlots} maxUnit=${plant.maxUnitKW} unit8=${unit8.ratedKW}")
+        val foundingSet = buildFoundingSpec(all)
+        println("slots=${plant.unitSlots} maxUnit=${plant.maxUnitKW} foundingSet=${foundingSet.ratedKW}")
         assertTrue("need enough slots", plant.unitSlots >= 6)
-        val best = unit8.ratedKW + (plant.unitSlots - 1) * plant.maxUnitKW
+        val best = foundingSet.ratedKW + (plant.unitSlots - 1) * plant.maxUnitKW
         assertTrue("max achievable $best kW must clear a megawatt", best >= MEGAWATT_KW)
         assertTrue(plant.n1Certified)
     }

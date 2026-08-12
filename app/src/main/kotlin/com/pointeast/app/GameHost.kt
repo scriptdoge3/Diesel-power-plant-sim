@@ -1,4 +1,4 @@
-package com.portannika.app
+package com.pointeast.app
 
 import android.content.Context
 import androidx.compose.runtime.getValue
@@ -6,10 +6,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
-import com.portannika.core.Sim
-import com.portannika.core.decodeSave
-import com.portannika.core.encode
-import com.portannika.core.toSave
+import com.pointeast.core.Sim
+import com.pointeast.core.decodeSave
+import com.pointeast.core.encode
+import com.pointeast.core.toSave
 
 /**
  * Owns the simulation and drives it from the frame clock.
@@ -60,7 +60,7 @@ class GameHost : ViewModel() {
         // One sample every six game-minutes gives 240 points across a day.
         if (sim.gameSeconds - lastSampleSeconds < 360.0) return
         lastSampleSeconds = sim.gameSeconds
-        historyTotal.addLast(sim.lastSnapshot.townDemandKW.toFloat())
+        historyTotal.addLast(sim.lastSnapshot.cityDemandKW.toFloat())
         historyMine.addLast(sim.lastSnapshot.playerKW.toFloat())
         while (historyTotal.size > 240) historyTotal.removeFirst()
         while (historyMine.size > 240) historyMine.removeFirst()

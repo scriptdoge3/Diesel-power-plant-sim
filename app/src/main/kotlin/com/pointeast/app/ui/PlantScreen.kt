@@ -1,4 +1,4 @@
-package com.portannika.app.ui
+package com.pointeast.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,13 +26,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.portannika.app.GameHost
-import com.portannika.core.CONSUMABLES
-import com.portannika.core.Genset
-import com.portannika.core.MEGAWATT_KW
-import com.portannika.core.REPAIRS
-import com.portannika.core.RunState
-import com.portannika.core.Sim
+import com.pointeast.app.GameHost
+import com.pointeast.core.CONSUMABLES
+import com.pointeast.core.Genset
+import com.pointeast.core.MEGAWATT_KW
+import com.pointeast.core.REPAIRS
+import com.pointeast.core.RunState
+import com.pointeast.core.Sim
 
 private enum class PlantTab { PLANT, MACHINES, MARKET }
 
@@ -79,7 +79,7 @@ private fun PlantOverview(host: GameHost) {
         Readout("Units owned", "${sim.units.size} of ${p.unitSlots} slots")
         Readout("Largest unit", "%.0f kW".format(sim.largestUnitKW))
         Readout("Capacity less largest (N-1)", "%.0f kW".format(sim.n1CapacityKW),
-            colour = if (sim.n1CapacityKW >= sim.lastSnapshot.townDemandKW) Pal.green else Pal.amber)
+            colour = if (sim.n1CapacityKW >= sim.lastSnapshot.cityDemandKW) Pal.green else Pal.amber)
         Readout("Per-unit ceiling here", "%.0f kW".format(p.maxUnitKW))
         Readout("N-1 certified", if (p.n1Certified) "yes" else "no",
             colour = if (p.n1Certified) Pal.green else Pal.inkFaint)
@@ -173,7 +173,7 @@ private fun MachineList(host: GameHost) {
 
 @Composable
 private fun MachineCard(host: GameHost, sim: Sim, u: Genset) {
-    var expanded by rememberSaveable(u.id) { mutableStateOf(u.isUnit8) }
+    var expanded by rememberSaveable(u.id) { mutableStateOf(u.isFoundingSet) }
     val worst = u.wear.worst()
 
     PanelCard(accent = if (u.runState == RunState.FAILED) Pal.red else Pal.panelEdge) {
@@ -259,7 +259,7 @@ private fun MachineCard(host: GameHost, sim: Sim, u: Genset) {
                 }
             }
 
-            if (!u.isUnit8) {
+            if (!u.isFoundingSet) {
                 Spacer(Modifier.height(8.dp))
                 PanelButton("SELL THIS MACHINE", Modifier.fillMaxWidth(),
                     enabled = !u.isRunning, colour = Pal.red.copy(alpha = 0.18f),

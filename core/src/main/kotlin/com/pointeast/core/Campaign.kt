@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 /* ============================================================================
  *  The career.
@@ -18,31 +18,41 @@ data class Milestone(
 
 val MILESTONES = listOf(
     Milestone("first_sync", "Shakedown",
-        "Synchronise Unit 8 to the station bus and deliver 100 kWh.", 250.0, 0.03),
+        "Synchronise Set 1 to the city bus and deliver 100 kWh.", 250.0, 0.03),
+    Milestone("lights_on", "The Lights Stay On",
+        "Carry Point East for 72 hours without the sector being dropped.", 600.0, 0.06),
     Milestone("journeyman", "Journeyman",
-        "Deliver 10,000 kWh to the town.", 900.0, 0.05),
+        "Deliver 10,000 kWh into the Dry Green City grid.", 900.0, 0.05),
     Milestone("uprate_75", "Uprated",
-        "Get Unit 8 to a continuous rating of 75 kW.", 700.0, 0.04),
+        "Get Set 1 to a continuous rating of 75 kW.", 700.0, 0.04),
+    Milestone("ground_broken", "Ground Broken",
+        "Give Point East enough reliable power that developers start building: 20% built out.",
+        1400.0, 0.07),
     Milestone("switchgear", "A Station, Not a Shed",
         "Install paralleling switchgear.", 0.0, 0.05),
     Milestone("second_unit", "Two Machines",
-        "Own and run a second generating unit.", 1200.0, 0.06),
+        "Own and run a second generating set.", 1200.0, 0.06),
     Milestone("uprate_130", "Everything the Block Will Take",
-        "Get Unit 8 to a continuous rating of 130 kW.", 2000.0, 0.05),
+        "Get Set 1 to a continuous rating of 130 kW.", 2000.0, 0.05),
     Milestone("own_bus", "Your Own Bus",
         "Build a 480 V main bus with revenue metering.", 1500.0, 0.06),
     Milestone("independence", "Off Their Copper",
         "Build your own step-up bank and feeder. No more wheeling fee.", 2500.0, 0.08),
+    Milestone("sector_built", "Sector E",
+        "Build Point East out to 60% of what the sector could be.", 5000.0, 0.10),
     Milestone("half_meg", "Five Hundred",
         "Reach 500 kW of installed capacity.", 4000.0, 0.08),
     Milestone("baseload", "Baseload Contract",
-        "Reach 350 kW installed with a reputation of 0.75 to win the co-op's baseload contract.", 6000.0, 0.10),
-    Milestone("fuel_farm", "Barge Pricing",
+        "Reach 350 kW installed with a reputation of 0.75 to win the city baseload contract.",
+        6000.0, 0.10),
+    Milestone("fuel_farm", "Bulk Pricing",
         "Build the bulk fuel farm.", 2000.0, 0.04),
     Milestone("n1", "N-1",
-        "Get the plant certified to lose its largest unit and still carry the town.", 5000.0, 0.12),
+        "Get the plant certified to lose its largest machine and still carry its load.",
+        5000.0, 0.12),
     Milestone("megawatt", "The First Megawatt",
-        "One thousand kilowatts of your own plant, certified, carrying Port Annika.", 25000.0, 0.20),
+        "One thousand kilowatts of your own plant, certified, carrying Point East.",
+        25000.0, 0.20),
 )
 
 val MILESTONE_BY_ID = MILESTONES.associateBy { it.id }
@@ -50,7 +60,7 @@ val MILESTONE_BY_ID = MILESTONES.associateBy { it.id }
 enum class OrderStatus { OFFERED, ACCEPTED, DECLINED, ACTIVE, COMPLETED, FAILED, EXPIRED }
 
 /**
- * A call from the co-op dispatcher: be on the bus carrying at least this much
+ * A call from the grid dispatcher: be on the bus carrying at least this much
  * between these hours. Answering the phone is most of the reputation game.
  */
 @kotlinx.serialization.Serializable
@@ -91,6 +101,8 @@ class Campaign {
         units: List<Genset>,
         plant: PlantSpec,
         installedKW: Double,
+        pointEastConfidence: Double,
+        pointEastLitHours: Double,
     ): List<Milestone> {
         val newly = mutableListOf<Milestone>()
         fun award(id: String, condition: Boolean) {
@@ -99,16 +111,19 @@ class Campaign {
                 newly += MILESTONE_BY_ID.getValue(id)
             }
         }
-        val unit8 = units.firstOrNull { it.isUnit8 }
+        val foundingSet = units.firstOrNull { it.isFoundingSet }
 
         award("first_sync", totalDeliveredKWh >= 100.0)
+        award("lights_on", pointEastLitHours >= 72.0)
         award("journeyman", totalDeliveredKWh >= 10_000.0)
-        award("uprate_75", (unit8?.spec?.ratedKW ?: 0.0) >= 75.0)
+        award("uprate_75", (foundingSet?.spec?.ratedKW ?: 0.0) >= 75.0)
+        award("ground_broken", pointEastConfidence >= 0.20)
         award("switchgear", plant.hasSwitchgear)
         award("second_unit", units.size >= 2)
-        award("uprate_130", (unit8?.spec?.ratedKW ?: 0.0) >= 130.0)
+        award("uprate_130", (foundingSet?.spec?.ratedKW ?: 0.0) >= 130.0)
         award("own_bus", plant.hasOwnBus)
         award("independence", plant.hasStepUp)
+        award("sector_built", pointEastConfidence >= 0.60)
         award("half_meg", installedKW >= 500.0)
         award("baseload", installedKW >= 350.0 && reputation >= 0.75)
         award("fuel_farm", plant.hasFuelFarm)

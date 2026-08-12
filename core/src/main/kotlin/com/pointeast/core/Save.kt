@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -14,7 +14,7 @@ const val SAVE_VERSION = 1
 @Serializable
 data class UnitSave(
     val id: String,
-    val isUnit8: Boolean,
+    val isFoundingSet: Boolean,
     val spec: GensetSpec,
     val runState: String,
     val rpm: Double,
@@ -106,6 +106,11 @@ data class SaveState(
     val log: List<LogSave>,
     val ledger: List<LedgerSave>,
     val days: List<DaySave>,
+    val prologueSeen: Boolean = false,
+    val seenNotes: List<String> = emptyList(),
+    val pointEastConfidence: Double = 0.0,
+    val pointEastLitHours: Double = 0.0,
+    val pointEastDarkHours: Double = 0.0,
 )
 
 private val json = Json {
@@ -127,7 +132,7 @@ fun Sim.toSave(seed: Int): SaveState = SaveState(
     gameWon = gameWon,
     units = units.map { u ->
         UnitSave(
-            id = u.id, isUnit8 = u.isUnit8, spec = u.spec,
+            id = u.id, isFoundingSet = u.isFoundingSet, spec = u.spec,
             runState = u.runState.name, rpm = u.rpm, rack = u.rack,
             fieldPU = u.fieldPU, emfPU = u.emfPU, boostBar = u.boostBar,
             coolantC = u.coolantC, oilC = u.oilC, egtC = u.egtC, windingC = u.windingC,
@@ -142,7 +147,7 @@ fun Sim.toSave(seed: Int): SaveState = SaveState(
             failureText = u.failureText,
         )
     },
-    station = grid.stationUnits.map {
+    station = grid.stations.map {
         StationSave(it.spec.id, it.online, it.starting, it.startTimer, it.speedSetPU,
             it.outputKW, it.emfPU, it.runHours, it.failed, it.failedFor)
     },
@@ -161,6 +166,11 @@ fun Sim.toSave(seed: Int): SaveState = SaveState(
     log = log.map { LogSave(it.gameSeconds, it.text, it.level.name) },
     ledger = ledger.map { LedgerSave(it.gameSeconds, it.text, it.amount, it.category) },
     days = days.map { DaySave(it.day, it.revenue, it.fuelCost, it.maintenance, it.capital, it.kWh, it.runHours) },
+    prologueSeen = prologueSeen,
+    seenNotes = seenNotes.toList(),
+    pointEastConfidence = grid.pointEastConfidence,
+    pointEastLitHours = grid.pointEastLitHours,
+    pointEastDarkHours = grid.pointEastDarkHours,
 )
 
 fun SaveState.encode(): String = json.encodeToString(SaveState.serializer(), this)

@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -78,8 +78,8 @@ data class Env(val ambientC: Double, val baroPa: Double)
 class Genset(
     val id: String,
     var spec: GensetSpec,
-    /** Unit 8 is the one the tech tree modifies; purchased machines are fixed. */
-    val isUnit8: Boolean,
+    /** Set 1 is the one the tech tree modifies; purchased machines are fixed. */
+    val isFoundingSet: Boolean,
 ) {
     // ------------------------------------------------------------- controls
     var fuelValveOpen = false

@@ -1,9 +1,9 @@
-package com.portannika.core
+package com.pointeast.core
 
 /* ============================================================================
  *  Upgrade tech tree.
  *
- *  Seven branches uprate Unit 8 itself; the eighth builds the plant around it.
+ *  Seven branches uprate Set 1 itself; the eighth builds the plant around it.
  *  Prerequisites cross branches on purpose -- you cannot fuel an engine you
  *  have not given air to, and you cannot sell 140 kW through a 62 kVA
  *  alternator. Each node carries a [Mods]; buying it stacks those onto the
@@ -257,10 +257,10 @@ val NODES: List<TechNode> = listOf(
         mods(unitSlots = 2, maxUnitKW = 350.0, wearMul = 0.90, powerhouseFlag = true)),
     TechNode("plant3", "plant", 2, "480 V main bus & revenue metering", 12000.0, listOf("plant2"),
         "Your own bus, your own breakers, your own certified revenue meter at the point of delivery.",
-        "The co-op stops estimating your output. Higher effective rate, plant-wide alarms.",
+        "The authority stops estimating your output. Higher effective rate, plant-wide alarms.",
         mods(ownBusFlag = true)),
     TechNode("plant4", "plant", 3, "Station step-up transformer bank", 26000.0, listOf("plant3"),
-        "Three single-phase 480/7200 V transformers and a pole line to the town feeder. You stop renting the co-op's copper.",
+        "Three single-phase 480/7200 V transformers and a pole line to the town feeder. You stop renting somebody else.s copper.",
         "Removes the 11% wheeling fee on everything you sell. Forever.",
         mods(stepUpFlag = true)),
     TechNode("plant5", "plant", 4, "Bulk fuel farm", 21000.0, listOf("plant3"),
@@ -276,7 +276,7 @@ val NODES: List<TechNode> = listOf(
         "Room for six units, and lifts the per-unit ceiling to 700 kW.",
         mods(unitSlots = 2, maxUnitKW = 700.0, engineHallFlag = true)),
     TechNode("plant8", "plant", 7, "N-1 reserve certification", 22000.0, listOf("plant7"),
-        "The co-op's engineer walks the plant and signs off that you can lose your largest unit and still carry the town.",
+        "The grid authority's engineer walks the plant and signs off that you can lose your largest unit and still carry the town.",
         "Required for the baseload contract, and the last thing standing between you and the megawatt.",
         mods(n1Flag = true)),
 )

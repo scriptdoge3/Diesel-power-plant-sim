@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.roundToInt
 
@@ -6,7 +6,10 @@ import kotlin.math.roundToInt
  *  The machinery market.
  *
  *  Once you have paralleling switchgear you can own more than one machine.
- *  Nothing new ever comes to Port Annika, so everything here is second-hand:
+ *
+ *  Dry Green is eleven days of hard road from anywhere worth naming, which
+ *  shapes this whole screen. Nothing new ever gets built and nothing new ever
+ *  arrives, so everything here is second-hand:
  *  cannery sets, ex-military standby plant, a tug's auxiliary engine, whatever
  *  came off the last barge. Stock rotates when the barge calls.
  * ========================================================================== */
@@ -82,7 +85,7 @@ private val PROVENANCE = listOf(
     "Pulled from a mine site that ran out of ore",
     "Hospital standby, replaced by a newer set",
     "Sat on a pallet in Seward for six years",
-    "Sawmill prime power until they went on the co-op",
+    "Sawmill prime power until they went on the city grid",
     "Barge auxiliary, well maintained by an owner who cared",
 )
 
@@ -106,7 +109,8 @@ class Market(private val rng: Rng) {
             val perKW = lerp(120.0, 430.0, condition) * (if (c.turbo) 1.12 else 1.0) *
                 (if (c.aftercooled) 1.08 else 1.0)
             val price = (c.kW * perKW * rng.range(0.88, 1.14)).roundToInt().toDouble()
-            // Freight to an isolated town is not a rounding error.
+            // Eleven days of road. The freight on an engine can run to a
+            // third of what the engine costs, and there is no way around it.
             val freight = (900.0 + c.kW * 26.0 * rng.range(0.8, 1.25)).roundToInt().toDouble()
             counter++
             listings += MarketListing(

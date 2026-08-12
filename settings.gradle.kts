@@ -20,6 +20,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PortAnnikaPower"
+rootProject.name = "PointEastElectrical"
 include(":app")
 include(":core")

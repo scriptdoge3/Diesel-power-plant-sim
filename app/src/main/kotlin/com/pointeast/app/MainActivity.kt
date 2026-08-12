@@ -1,4 +1,4 @@
-package com.portannika.app
+package com.pointeast.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -47,17 +47,19 @@ import androidx.compose.material.icons.filled.Factory
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Upgrade
-import com.portannika.app.ui.LedgerScreen
-import com.portannika.app.ui.GridScreen
-import com.portannika.app.ui.Mono
-import com.portannika.app.ui.Pal
-import com.portannika.app.ui.PanelScreen
-import com.portannika.app.ui.PlantScreen
-import com.portannika.app.ui.PortAnnikaTheme
-import com.portannika.app.ui.StatusBar
-import com.portannika.app.ui.TechScreen
-import com.portannika.app.ui.HelpSheet
-import com.portannika.app.ui.WinScreen
+import com.pointeast.app.ui.LedgerScreen
+import com.pointeast.app.ui.GridScreen
+import com.pointeast.app.ui.Mono
+import com.pointeast.app.ui.Pal
+import com.pointeast.app.ui.PanelScreen
+import com.pointeast.app.ui.PlantScreen
+import com.pointeast.app.ui.PointEastTheme
+import com.pointeast.app.ui.StatusBar
+import com.pointeast.app.ui.TechScreen
+import com.pointeast.app.ui.ChapterSheet
+import com.pointeast.app.ui.HelpSheet
+import com.pointeast.app.ui.PrologueSheet
+import com.pointeast.app.ui.WinScreen
 import kotlinx.coroutines.isActive
 
 class MainActivity : ComponentActivity() {
@@ -65,7 +67,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PortAnnikaTheme {
+            PointEastTheme {
                 GameRoot()
             }
         }
@@ -112,7 +114,11 @@ private fun GameRoot() {
             val now = withFrameNanos { it }
             val dt = (now - last) / 1_000_000_000.0
             last = now
-            host.advance(dt, context)
+            // The world holds while you are reading. A story beat should not
+            // cost you the frequency.
+            if (host.sim.prologueSeen && host.sim.pendingChapters.isEmpty()) {
+                host.advance(dt, context)
+            }
         }
     }
 
@@ -156,7 +162,20 @@ private fun GameRoot() {
                 }
             }
 
-            if (host.sim.gameWon) WinScreen(host)
+            when {
+                !host.sim.prologueSeen -> PrologueSheet {
+                    host.sim.prologueSeen = true
+                    host.save(context)
+                }
+                host.sim.pendingChapters.isNotEmpty() -> {
+                    val ch = host.sim.pendingChapters.first()
+                    ChapterSheet(ch.title, ch.body) {
+                        host.sim.pendingChapters.removeFirst()
+                        host.save(context)
+                    }
+                }
+                host.sim.gameWon -> WinScreen(host)
+            }
             if (host.showHelp) HelpSheet(onClose = { host.showHelp = false })
 
             host.toast?.let { message ->

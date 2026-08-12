@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -9,7 +9,7 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 
 /* ============================================================================
- *  The Port Annika system.
+ *  The Dry Green City system.
  *
  *  Every machine on the bus turns at the same speed, so there is one system
  *  frequency and it is set by the balance between what the prime movers make
@@ -25,8 +25,8 @@ import kotlin.math.tan
 
 const val SYSTEM_BASE_KVA = 1000.0
 
-/** One of the co-op's machines. Simplified: no thermodynamics, just droop. */
-class StationUnit(val spec: StationUnitSpec) {
+/** One of the other stations. machines. Simplified: no thermodynamics, just droop. */
+class CityStation(val spec: StationSpec) {
     var online = false
     var starting = false
     var startTimer = 0.0
@@ -110,7 +110,7 @@ data class GridSnapshot(
     val busVolts: Double,
     val lineVolts: Double,
     val serviceVolts: Double,
-    val townDemandKW: Double,
+    val cityDemandKW: Double,
     val servedKW: Double,
     val shedKW: Double,
     val totalGenKW: Double,
@@ -119,11 +119,14 @@ data class GridSnapshot(
     val reserveKW: Double,
     val blackout: Boolean,
     val voltageCollapse: Boolean,
+    val pointEastDemandKW: Double,
+    val pointEastShedKW: Double,
+    val pointEastConfidence: Double,
 )
 
 class Grid(private val rng: Rng) {
 
-    val stationUnits = STATION_UNITS.map { StationUnit(it) }
+    val stations = CITY_STATIONS.map { CityStation(it) }
     val events = mutableListOf<LoadEvent>()
 
     var frequencyHz = Nominal.FREQ
@@ -132,11 +135,23 @@ class Grid(private val rng: Rng) {
     var voltageCollapse = false
     var shedKW = 0.0
     var unservedKWh = 0.0
-    var townDemandKW = 0.0
+    var cityDemandKW = 0.0
     var servedKW = 0.0
     var ambientC = 8.0
 
-    /** Secondary control: the co-op's operator trimming speeders to hold 90 Hz. */
+    /**
+     * How far Point East has been built out, 0 to 1. Every hour the sector
+     * gets clean power from your plant this creeps up and somebody breaks
+     * ground; every hour it sits browned out, it falls back much faster.
+     * This is the only load in the city that answers to what you do.
+     */
+    var pointEastConfidence = 0.0
+    var pointEastDemandKW = 0.0
+    var pointEastShedKW = 0.0
+    var pointEastLitHours = 0.0
+    var pointEastDarkHours = 0.0
+
+    /** Secondary control: the grid authority operator trimming speeders to hold 90 Hz. */
     private var agcBias = 0.0
     private var shedSteps = 0
 
@@ -161,21 +176,38 @@ class Grid(private val rng: Rng) {
      * weather-driven heating term, and slow growth as the town gains
      * confidence in its power supply.
      */
+    /** What Point East is drawing today, given how much of it has been built. */
+    fun pointEastBaseKW(gameSeconds: Double): Double {
+        val d = calendarOf(gameSeconds)
+        val h = d.hourFrac
+        val i0 = h.toInt().clamp(0, 23)
+        val i1 = (i0 + 1) % 24
+        val shape = lerp(City.DAILY_SHAPE[i0], City.DAILY_SHAPE[i1], h - i0)
+        val built = lerp(PointEast.BASE_KW, PointEast.DEVELOPED_KW, pointEastConfidence)
+        var kW = built * shape
+        // Out on the flats it is hotter by day and colder by night than the
+        // rest of the city, and the new blocks are all electric.
+        if (ambientC < 15.0) kW += (15.0 - ambientC) * 1.4 * (0.3 + pointEastConfidence)
+        if (ambientC > 24.0) kW += (ambientC - 24.0) * 2.2 * (0.3 + pointEastConfidence)
+        return kW
+    }
+
+    /** The seven sectors the other stations already serve. */
     fun baseDemandKW(gameSeconds: Double, growthYears: Double): Double {
         val d = calendarOf(gameSeconds)
         val h = d.hourFrac
         val i0 = h.toInt().clamp(0, 23)
         val i1 = (i0 + 1) % 24
-        val shape = lerp(Town.DAILY_SHAPE[i0], Town.DAILY_SHAPE[i1], h - i0)
+        val shape = lerp(City.DAILY_SHAPE[i0], City.DAILY_SHAPE[i1], h - i0)
 
-        var kW = Town.BASE_KW * shape
-        if (ambientC < 15.0) kW += (15.0 - ambientC) * Town.HEAT_KW_PER_DEG_C
-        if (ambientC > 22.0) kW += (ambientC - 22.0) * Town.COOL_KW_PER_DEG_C
+        var kW = City.BASE_KW * shape
+        if (ambientC < 15.0) kW += (15.0 - ambientC) * City.HEAT_KW_PER_DEG_C
+        if (ambientC > 22.0) kW += (ambientC - 22.0) * City.COOL_KW_PER_DEG_C
 
         // The cannery runs hard in summer, the sawmill in winter.
         val season = 1.0 + 0.10 * sin((d.dayOfYear - 172) / 365.0 * 2 * PI)
         kW *= season
-        kW *= (1.0 + Town.GROWTH_PER_YEAR * growthYears)
+        kW *= (1.0 + City.GROWTH_PER_YEAR * growthYears)
         return kW
     }
 
@@ -207,12 +239,12 @@ class Grid(private val rng: Rng) {
     // ---------------------------------------------------------- the dispatch
 
     /**
-     * The co-op's dispatcher: keep enough capacity online to carry the load
+     * The grid authority's dispatcher: keep enough capacity online to carry the load
      * with a reserve margin, cheapest and largest machines first.
      */
     fun dispatchStation(demandKW: Double, playerFirmKW: Double) {
         val target = demandKW * 1.20 + 25.0
-        val available = stationUnits.filter { !it.failed }.sortedBy { it.spec.priority }
+        val available = stations.filter { !it.failed }.sortedBy { it.spec.priority }
         var online = playerFirmKW + available.filter { it.online || it.starting }.sumOf { it.spec.kW }
 
         if (online < target) {
@@ -254,15 +286,17 @@ class Grid(private val rng: Rng) {
         val onBusPlayer = playerUnits.filter { it.onBus && it.isRunning }
 
         // --- demand -------------------------------------------------------
-        var demand = baseDemandKW(gameSeconds, growthYears)
-        var demandKvar = demand * tan(kotlin.math.acos(Town.PF))
+        val cityKW = baseDemandKW(gameSeconds, growthYears)
+        pointEastDemandKW = pointEastBaseKW(gameSeconds)
+        var demand = cityKW + pointEastDemandKW
+        var demandKvar = demand * tan(kotlin.math.acos(City.PF))
         for (e in events) { demand += e.currentKW(); demandKvar += e.currentKvar() }
-        townDemandKW = demand
+        cityDemandKW = demand
 
         // Load is partly constant impedance, so it falls when volts fall, and
         // partly motors, so it falls when frequency falls.
-        val vFactor = Town.CONST_Z_FRAC * busVoltPU * busVoltPU + (1.0 - Town.CONST_Z_FRAC)
-        val fFactor = 1.0 + Town.LOAD_DAMPING_D * (frequencyHz / Nominal.FREQ - 1.0)
+        val vFactor = City.CONST_Z_FRAC * busVoltPU * busVoltPU + (1.0 - City.CONST_Z_FRAC)
+        val fFactor = 1.0 + City.LOAD_DAMPING_D * (frequencyHz / Nominal.FREQ - 1.0)
         var effectiveDemand = demand * vFactor * fFactor
         // The voltage dependence of the reactive load is applied inside the
         // voltage solve, which needs to evaluate it at trial voltages.
@@ -279,16 +313,22 @@ class Grid(private val rng: Rng) {
             if (restoreTimer > 45.0) { shedSteps--; restoreTimer = 0.0 }
         } else restoreTimer = 0.0
 
+        pointEastShedKW = 0.0
         if (shedSteps > 0) {
             val frac = (0.18 * shedSteps).coerceAtMost(0.60)
             shedKW = effectiveDemand * frac
             effectiveDemand -= shedKW
             nominalKvar *= (1.0 - frac)
+            // Point East hangs off the end of the worst feeder in the city, so
+            // when the grid runs short it goes dark before anywhere else does.
+            val peShare = if (demand > 1.0) pointEastDemandKW / demand else 0.0
+            pointEastShedKW = (shedKW * peShare * PointEast.SHED_PRIORITY)
+                .coerceAtMost(pointEastDemandKW)
         }
 
         // --- generation ---------------------------------------------------
-        for (u in stationUnits) u.step(dt, frequencyHz, rng)
-        val stationKW = stationUnits.sumOf { it.outputKW }
+        for (u in stations) u.step(dt, frequencyHz, rng)
+        val stationKW = stations.sumOf { it.outputKW }
         val playerKW = onBusPlayer.sumOf { (it.brakeKW * it.spec.altEff) }
         val totalGen = stationKW + playerKW
 
@@ -296,7 +336,7 @@ class Grid(private val rng: Rng) {
         // Equivalent rotating inertia of everything locked to the bus.
         val omegaRated = Nominal.RPM * 2 * PI / 60.0
         var jTotal = onBusPlayer.sumOf { it.spec.inertia }
-        for (u in stationUnits) if (u.online) {
+        for (u in stations) if (u.online) {
             jTotal += 2.0 * u.spec.inertiaH * (u.ratedKVA * 1000.0) / (omegaRated * omegaRated)
         }
 
@@ -327,8 +367,8 @@ class Grid(private val rng: Rng) {
         }
         frequencyHz = frequencyHz.clamp(0.0, Nominal.FREQ * 1.35)
 
-        // --- secondary control (the co-op operator trimming speeders) ------
-        val onlineStation = stationUnits.filter { it.online }
+        // --- secondary control (the grid authority operator trimming speeders) ------
+        val onlineStation = stations.filter { it.online }
         if (onlineStation.isNotEmpty()) {
             // Only integrate against a frequency that means something. Letting
             // this wind up while the bus is dead leaves every speeder on its
@@ -351,13 +391,42 @@ class Grid(private val rng: Rng) {
         if (blackout) unservedKWh += effectiveDemand * dt / 3600.0
         else if (shedKW > 0) unservedKWh += shedKW * dt / 3600.0
 
-        val reserve = stationUnits.filter { it.online }.sumOf { it.spec.kW } +
+        updatePointEast(dt, playerKW)
+
+        val reserve = stations.filter { it.online }.sumOf { it.spec.kW } +
             onBusPlayer.sumOf { it.spec.ratedKW } - effectiveDemand
 
         return snapshot(demand, playerKW, stationKW, reserve)
     }
 
     private var restoreTimer = 0.0
+
+    /**
+     * Point East grows when your plant is the reason its lights are on, and
+     * only then. Power arriving from the other stations keeps the sector
+     * alive but does not persuade anybody to build there -- they have been
+     * promised that before. Being dropped costs far more confidence than
+     * being carried earns, which is why one bad night undoes a good week.
+     */
+    private fun updatePointEast(dt: Double, playerKW: Double) {
+        val hours = dt / 3600.0
+        val dark = blackout || pointEastShedKW > pointEastDemandKW * 0.05
+        val carriedByYou = !dark && playerKW >= pointEastDemandKW * 0.90 &&
+            abs(frequencyHz - Nominal.FREQ) < 1.5 && busVoltPU > 0.92
+
+        val perHour = 1.0 / (PointEast.DEVELOPMENT_DAYS * 24.0)
+        when {
+            dark -> {
+                pointEastDarkHours += hours
+                pointEastConfidence -= hours * perHour * PointEast.SETBACK_MULTIPLIER
+            }
+            carriedByYou -> {
+                pointEastLitHours += hours
+                pointEastConfidence += hours * perHour
+            }
+        }
+        pointEastConfidence = pointEastConfidence.clamp(0.0, 1.0)
+    }
 
     /**
      * Where the combined droop characteristics cross the demand line.
@@ -377,7 +446,7 @@ class Grid(private val rng: Rng) {
         var hi = Nominal.FREQ * 1.08
         repeat(28) {
             val mid = (lo + hi) / 2.0
-            var gen = stationUnits.filter { it.online }.sumOf { it.availableKW(mid) }
+            var gen = stations.filter { it.online }.sumOf { it.availableKW(mid) }
             for (g in playerUnits) gen += g.electricalKWAtFrequency(mid, env)
             if (gen > demandKW) lo = mid else hi = mid
         }
@@ -402,7 +471,7 @@ class Grid(private val rng: Rng) {
      *  operator on a manual exciter has to manage, and both fall out of this.
      */
     private fun solveVoltage(playerUnits: List<Genset>, loadKvarNominal: Double, dt: Double) {
-        val avrStation = stationUnits.filter { it.online }
+        val avrStation = stations.filter { it.online }
         val avrPlayer = playerUnits.filter { it.spec.avr && it.spec.varShare }
         // An AVR without cross-current compensation regulates to its own
         // setpoint, so it behaves as an injector, not a sharer.
@@ -433,7 +502,7 @@ class Grid(private val rng: Rng) {
         }
 
         fun loadKvarAt(v: Double) =
-            loadKvarNominal * (Town.CONST_Z_FRAC * v * v + (1.0 - Town.CONST_Z_FRAC))
+            loadKvarNominal * (City.CONST_Z_FRAC * v * v + (1.0 - City.CONST_Z_FRAC))
 
         fun regulatedTarget(v: Double): Double {
             val r = (loadKvarAt(v) - injectedKvar(v)) / qCap
@@ -470,7 +539,7 @@ class Grid(private val rng: Rng) {
         for (g in avrPlayer) g.kvar = qRegulated * (g.spec.ratedKVA * 0.6) / qCap
         for (u in avrStation) {
             u.kvar = qRegulated * (u.ratedKVA * 0.6) / qCap
-            // Keep the co-op machines' internal EMF consistent with the VARs
+            // Keep the grid authority machines' internal EMF consistent with the VARs
             // they are carrying, so the synchroscope has something honest to
             // compare against and a machine coming off the bus is at the right
             // open-circuit volts.
@@ -497,7 +566,7 @@ class Grid(private val rng: Rng) {
         // The load's reactive demand still falls with voltage; use the last
         // solution to evaluate it, which is close enough for one step.
         val qLoadPU = loadKvarNominal *
-            (Town.CONST_Z_FRAC * busVoltPU * busVoltPU + (1.0 - Town.CONST_Z_FRAC)) / SYSTEM_BASE_KVA
+            (City.CONST_Z_FRAC * busVoltPU * busVoltPU + (1.0 - City.CONST_Z_FRAC)) / SYSTEM_BASE_KVA
         val disc = b * b - 4.0 * a * qLoadPU
         voltageCollapse = disc < 0.0
         val v = if (disc < 0.0) b / (2.0 * a) else (b + sqrt(disc)) / (2.0 * a)
@@ -515,7 +584,7 @@ class Grid(private val rng: Rng) {
             busVolts = busVoltPU * Nominal.GEN_VOLTS,
             lineVolts = busVoltPU * Nominal.LINE_VOLTS,
             serviceVolts = busVoltPU * Nominal.SERVICE_VOLTS,
-            townDemandKW = demand,
+            cityDemandKW = demand,
             servedKW = servedKW,
             shedKW = shedKW,
             totalGenKW = playerKW + stationKW,
@@ -524,9 +593,12 @@ class Grid(private val rng: Rng) {
             reserveKW = reserve,
             blackout = blackout,
             voltageCollapse = voltageCollapse,
+            pointEastDemandKW = pointEastDemandKW,
+            pointEastShedKW = pointEastShedKW,
+            pointEastConfidence = pointEastConfidence,
         )
 
-    /** Total co-op capacity that is running or could be started right now. */
-    fun stationCapacityKW() = stationUnits.filter { !it.failed }.sumOf { it.spec.kW }
-    fun stationOnlineKW() = stationUnits.filter { it.online }.sumOf { it.spec.kW }
+    /** Total grid authority capacity that is running or could be started right now. */
+    fun cityStationCapacityKW() = stations.filter { !it.failed }.sumOf { it.spec.kW }
+    fun cityStationOnlineKW() = stations.filter { it.online }.sumOf { it.spec.kW }
 }

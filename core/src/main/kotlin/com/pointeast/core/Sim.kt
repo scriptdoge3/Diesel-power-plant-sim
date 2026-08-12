@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -55,7 +55,7 @@ class Sim(seed: Int = 20260811) {
         private set
 
     val units = mutableListOf<Genset>()
-    var selectedUnitId: String = "u8"
+    var selectedUnitId: String = "g1"
 
     val log = ArrayDeque<LogEntry>()
     val ledger = ArrayDeque<LedgerEntry>()
@@ -63,12 +63,17 @@ class Sim(seed: Int = 20260811) {
 
     var autoPlant = false
     var lastSnapshot: GridSnapshot = GridSnapshot(
-        Nominal.FREQ, 1.0, 480.0, 7200.0, 360.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, false
+        Nominal.FREQ, 1.0, 480.0, 7200.0, 360.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, false, 0.0, 0.0, 0.0
     )
         private set
 
     var gameWon = false
         private set
+
+    /** Story beats waiting to be shown, and the prologue flag. */
+    val pendingChapters = ArrayDeque<Chapter>()
+    var prologueSeen = false
+    val seenNotes = mutableSetOf<String>()
 
     // Accumulators reset each in-game day.
     private var lastDay = -1
@@ -76,19 +81,35 @@ class Sim(seed: Int = 20260811) {
     private var monthlyBonusDay = -1
 
     init {
-        val u8 = Genset("u8", buildUnit8Spec(emptySet()), isUnit8 = true)
-        u8.coolantC = 6.0; u8.oilC = 6.0; u8.windingC = 6.0
-        units += u8
+        val first = Genset("g1", buildFoundingSpec(emptySet()), isFoundingSet = true)
+        // Heavily used. Twenty years driving an ice plant compressor, then two
+        // on a pallet. Nothing is broken; nothing is new either.
+        first.wear = Wear(
+            bearings = 0.28, rings = 0.34, injectors = 0.46, gasket = 0.19,
+            turbo = 0.0, alternator = 0.24, governor = 0.37,
+        )
+        first.service = ServiceHours(
+            oil = 240.0, fuelFilter = 470.0, airFilter = 380.0, valveLash = 930.0,
+            injectors = 1880.0, coolant = 3600.0, radiator = 1420.0,
+        )
+        first.runHours = 31480.0
+        first.airFilterFouling = 0.55
+        first.fuelFilterFouling = 0.44
+        first.radiatorFouling = 0.48
+        first.oilCondition = 0.52
+        first.batterySoC = 0.62
+        first.coolantC = 6.0; first.oilC = 6.0; first.windingC = 6.0
+        units += first
         grid.updateWeather(gameSeconds)
         market.refresh(currentDay(), plant, campaign.reputation)
-        logMsg("Port Annika Municipal Power. Unit 8 is yours; the other seven are the co-op's.", LogLevel.INFO)
+        logMsg("Point East Electrical. Set 1 is yours; the other seven are the grid authority.", LogLevel.INFO)
         logMsg("Sync to the station bus and start selling. The goal is a megawatt of your own.", LogLevel.INFO)
     }
 
     // ------------------------------------------------------------ accessors
 
     val selectedUnit: Genset get() = units.find { it.id == selectedUnitId } ?: units.first()
-    val unit8: Genset get() = units.first { it.isUnit8 }
+    val foundingSet: Genset get() = units.first { it.isFoundingSet }
     val installedKW: Double get() = units.sumOf { it.spec.ratedKW }
     val onlineKW: Double get() = units.filter { it.onBus }.sumOf { it.elecKW }
     val date: GameDate get() = calendarOf(gameSeconds)
@@ -134,7 +155,7 @@ class Sim(seed: Int = 20260811) {
         // ---- dispatch and automation -----------------------------------
         val demandNow = grid.baseDemandKW(gameSeconds, growthYears)
         // Credit the player only for power actually flowing, and discount it:
-        // the co-op will not shed its own reserve on the strength of a machine
+        // the grid authority will not shed its own reserve on the strength of a machine
         // that might open its breaker in the next minute.
         val playerFirm = units.filter { it.onBus }.sumOf { it.elecKW } * 0.7
         grid.dispatchStation(demandNow, playerFirm)
@@ -162,6 +183,7 @@ class Sim(seed: Int = 20260811) {
                 for (u in units) if (u.isRunning) {
                     u.requestStop()
                     logMsg("${u.spec.name} ran the tank dry and shut down.", LogLevel.ALARM)
+                    renner("tank_dry")
                 }
             }
         }
@@ -174,18 +196,27 @@ class Sim(seed: Int = 20260811) {
         }
 
         campaign.peakDeliveredKW = maxOf(campaign.peakDeliveredKW, snap.playerKW)
-        for (m in campaign.checkMilestones(units, plant, installedKW)) {
+        for (m in campaign.checkMilestones(
+            units, plant, installedKW,
+            grid.pointEastConfidence, grid.pointEastLitHours,
+        )) {
             cash += m.reward
             campaign.reputation = (campaign.reputation + m.repReward).clamp(0.0, 1.0)
             if (m.reward > 0) postLedger("Milestone: ${m.title}", m.reward, "milestone")
             logMsg("MILESTONE -- ${m.title}. ${m.subtitle}", LogLevel.GOOD)
+            CHAPTER_BY_MILESTONE[m.id]?.let { pendingChapters.addLast(it) }
             if (m.id == "megawatt") {
                 gameWon = true
-                logMsg("Port Annika has its first megawatt, and it is yours.", LogLevel.GOOD)
+                logMsg("Dry Green City has its first megawatt, and it is yours.", LogLevel.GOOD)
             }
         }
 
         collectAlarms()
+        if (units.any { it.runState == RunState.FAILED }) renner("first_failure")
+        if (snap.blackout || snap.pointEastShedKW > 1.0) renner("first_blackout")
+        if (cash < 0.0) renner("broke")
+        if (units.any { it.spec.turbo != null }) renner("first_turbo")
+        if (units.size >= 2) renner("first_hire")
         rolloverDay()
     }
 
@@ -226,7 +257,7 @@ class Sim(seed: Int = 20260811) {
 
         for (u in units) if (u.isRunning) today.runHours += hours
 
-        // Power quality: the co-op docks you while you are on the bus and the
+        // Power quality: the grid authority docks you while you are on the bus and the
         // frequency is outside the band. Your droop and your speeder decide it.
         val anyOnBus = units.any { it.onBus }
         if (anyOnBus && !snap.blackout) {
@@ -425,9 +456,9 @@ class Sim(seed: Int = 20260811) {
         if (node.cost > cash) return "Not enough cash"
 
         // Work on the machine means the machine is down.
-        val u8 = unit8
-        if (node.branch !in listOf("ctrl", "plant", "recov") && u8.isRunning) {
-            return "Shut Unit 8 down before working on it"
+        val machine = foundingSet
+        if (node.branch !in listOf("ctrl", "plant", "recov") && machine.isRunning) {
+            return "Shut Set 1 down before working on it"
         }
 
         cash -= node.cost
@@ -447,7 +478,7 @@ class Sim(seed: Int = 20260811) {
     private fun rebuildSpecs() {
         plant = buildPlantSpec(ownedTech)
         for (u in units) {
-            u.spec = if (u.isUnit8) buildUnit8Spec(ownedTech).applyPlantControls(ownedTech, plant)
+            u.spec = if (u.isFoundingSet) buildFoundingSpec(ownedTech).applyPlantControls(ownedTech, plant)
             else u.spec.applyPlantControls(ownedTech, plant)
             u.droop = u.droop.coerceAtLeast(u.spec.droopMin)
         }
@@ -461,10 +492,14 @@ class Sim(seed: Int = 20260811) {
         if (l.totalCost > cash) return "Not enough cash"
 
         cash -= l.totalCost
-        val n = 8 + units.size
-        val id = "u${n + 1}"
-        val spec = l.toSpec("Unit ${n + 1}").applyPlantControls(ownedTech, plant)
-        val g = Genset(id, spec, isUnit8 = false)
+        // Lowest free set number, so the second machine is Set 2, and selling
+        // one and buying again fills the gap rather than leaving a hole in the
+        // numbering or colliding with a set that is still on the pad.
+        var n = 2
+        while (units.any { it.id == "g$n" }) n++
+        val id = "g$n"
+        val spec = l.toSpec("Set $n").applyPlantControls(ownedTech, plant)
+        val g = Genset(id, spec, isFoundingSet = false)
         // A used machine arrives with the wear its hours imply.
         val w = (1.0 - l.condition)
         g.wear = Wear(
@@ -480,19 +515,20 @@ class Sim(seed: Int = 20260811) {
         market.remove(listingId)
         postLedger("Purchased ${l.make} (${l.kW.roundToInt()} kW)", -l.totalCost, "capital")
         daySummary().capital += l.totalCost
-        logMsg("Unit ${n + 1} landed: ${l.make}, ${l.kW.roundToInt()} kW, ${l.conditionText.lowercase()}.", LogLevel.GOOD)
+        logMsg("Set $n landed: ${l.make}, ${l.kW.roundToInt()} kW, ${l.conditionText.lowercase()}.", LogLevel.GOOD)
+        renner("first_freight")
         return "Bought ${l.make}"
     }
 
     fun sellMachine(id: String): String {
         val u = units.find { it.id == id } ?: return "No such unit"
-        if (u.isUnit8) return "Unit 8 is not for sale. It is where you started."
+        if (u.isFoundingSet) return "Set 1 is not for sale. It is the machine the company was built on."
         if (u.isRunning) return "Shut it down first"
         val cond = 1.0 - u.wear.worst().second
         val value = u.spec.ratedKW * lerp(90.0, 260.0, cond.clamp(0.0, 1.0))
         cash += value
         units.remove(u)
-        if (selectedUnitId == id) selectedUnitId = "u8"
+        if (selectedUnitId == id) selectedUnitId = "g1"
         postLedger("Sold ${u.spec.name}", value, "capital")
         logMsg("Sold ${u.spec.name} for ${money(value)}.", LogLevel.INFO)
         return "Sold for ${money(value)}"
@@ -560,6 +596,13 @@ class Sim(seed: Int = 20260811) {
         seenAlarms.addAll(now)
     }
 
+    /** Cal remarks on something, once per career. */
+    fun renner(tag: String) {
+        if (tag in seenNotes) return
+        seenNotes += tag
+        RENNER_NOTES[tag]?.let { logMsg("$BOSS_NAME: $it", LogLevel.INFO) }
+    }
+
     fun logMsg(text: String, level: LogLevel) {
         log.addLast(LogEntry(gameSeconds, text, level))
         while (log.size > 300) log.removeFirst()
@@ -600,7 +643,7 @@ class Sim(seed: Int = 20260811) {
 
         units.clear()
         for (us in s.units) {
-            val g = Genset(us.id, us.spec, us.isUnit8)
+            val g = Genset(us.id, us.spec, us.isFoundingSet)
             g.runState = runCatching { RunState.valueOf(us.runState) }.getOrDefault(RunState.STOPPED)
             g.rpm = us.rpm; g.rack = us.rack; g.fieldPU = us.fieldPU; g.emfPU = us.emfPU
             g.boostBar = us.boostBar
@@ -621,13 +664,13 @@ class Sim(seed: Int = 20260811) {
             g.failureText = us.failureText
             units += g
         }
-        if (units.none { it.isUnit8 }) {
-            units.add(0, Genset("u8", buildUnit8Spec(ownedTech), true))
+        if (units.none { it.isFoundingSet }) {
+            units.add(0, Genset("g1", buildFoundingSpec(ownedTech), true))
         }
         selectedUnitId = if (units.any { it.id == s.selectedUnitId }) s.selectedUnitId else units.first().id
 
         for (ss in s.station) {
-            val u = grid.stationUnits.find { it.spec.id == ss.id } ?: continue
+            val u = grid.stations.find { it.spec.id == ss.id } ?: continue
             u.online = ss.online; u.starting = ss.starting; u.startTimer = ss.startTimer
             u.speedSetPU = ss.speedSetPU; u.outputKW = ss.outputKW; u.emfPU = ss.emfPU
             u.runHours = ss.runHours; u.failed = ss.failed; u.failedFor = ss.failedFor
@@ -635,6 +678,12 @@ class Sim(seed: Int = 20260811) {
         grid.frequencyHz = s.frequencyHz
         grid.busVoltPU = s.busVoltPU
         grid.unservedKWh = s.unservedKWh
+        grid.pointEastConfidence = s.pointEastConfidence
+        grid.pointEastLitHours = s.pointEastLitHours
+        grid.pointEastDarkHours = s.pointEastDarkHours
+        prologueSeen = s.prologueSeen
+        seenNotes.clear(); seenNotes += s.seenNotes
+        pendingChapters.clear()
         grid.updateWeather(gameSeconds)
 
         market.listings = s.listings.toMutableList()

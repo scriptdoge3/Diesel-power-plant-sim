@@ -1,4 +1,4 @@
-package com.portannika.core
+package com.pointeast.core
 
 import kotlin.math.min
 
@@ -86,7 +86,7 @@ data class PlantSpec(
     val hasEngineHall: Boolean,
     val scada: Boolean,
 ) {
-    /** Fraction of revenue the co-op keeps for moving your power on their line. */
+    /** Fraction of revenue the grid authority keeps for moving your power on their line. */
     val wheelingFrac: Double get() = if (hasStepUp) 0.0 else Econ.WHEELING_FRAC
     val fuelPriceMul: Double get() = if (hasFuelFarm) 1.0 - Econ.BARGE_DISCOUNT else 1.0
 }
@@ -149,8 +149,8 @@ private fun foldMods(owned: Set<String>): Mods {
     )
 }
 
-/** Build Unit 8's effective spec from the owned tech-tree nodes. */
-fun buildUnit8Spec(owned: Set<String>): GensetSpec {
+/** Build Set 1's effective spec from the owned tech-tree nodes. */
+fun buildFoundingSpec(owned: Set<String>): GensetSpec {
     val m = foldMods(owned)
     val ratedKVA = AlternatorBase.RATED_KVA * m.altKVAMul
     val altKWLimit = ratedKVA * AlternatorBase.RATED_PF
@@ -165,7 +165,7 @@ fun buildUnit8Spec(owned: Set<String>): GensetSpec {
     val engineKWLimit = engineShaftKW * altEff
 
     return GensetSpec(
-        name = "Unit 8",
+        name = "Set 1",
         make = EngineBase.NAME,
         cylinders = EngineBase.CYLINDERS,
         displacementL = EngineBase.DISPLACEMENT_L,
@@ -239,7 +239,7 @@ fun buildPlantSpec(owned: Set<String>): PlantSpec {
 
 /**
  * Second-hand machines bought from the market. They arrive at a fixed
- * specification -- you cannot put the Unit 8 tech tree into them -- but
+ * specification -- you cannot put the Set 1 tech tree into them -- but
  * plant-wide control upgrades still reach them through [applyPlantControls].
  */
 fun marketSpec(

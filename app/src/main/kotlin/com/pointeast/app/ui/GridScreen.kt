@@ -1,4 +1,4 @@
-package com.portannika.app.ui
+package com.pointeast.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,10 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.portannika.app.GameHost
-import com.portannika.core.Nominal
-import com.portannika.core.OrderStatus
-import com.portannika.core.calendarOf
+import com.pointeast.app.GameHost
+import com.pointeast.core.Nominal
+import com.pointeast.core.PointEast
+import com.pointeast.core.OrderStatus
+import com.pointeast.core.calendarOf
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -40,7 +41,7 @@ fun GridScreen(host: GameHost) {
             .padding(top = 8.dp, bottom = 16.dp),
     ) {
         // ---------------------------------------------------------- the system
-        PanelCard("Port Annika system") {
+        PanelCard("Dry Green City grid") {
             Row {
                 Column(Modifier.weight(1f)) {
                     Readout("Frequency", "%.2f Hz".format(snap.frequencyHz),
@@ -52,8 +53,8 @@ fun GridScreen(host: GameHost) {
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Readout("Town demand", "%.0f kW".format(snap.townDemandKW))
-                    Readout("Co-op units", "%.0f kW".format(snap.stationKW))
+                    Readout("Town demand", "%.0f kW".format(snap.cityDemandKW))
+                    Readout("Other stations", "%.0f kW".format(snap.stationKW))
                     Readout("Your plant", "%.0f kW".format(snap.playerKW), colour = Pal.brass)
                     Readout("Spinning reserve", "%.0f kW".format(snap.reserveKW),
                         colour = if (snap.reserveKW < 40) Pal.red else Pal.green)
@@ -61,6 +62,53 @@ fun GridScreen(host: GameHost) {
                         colour = if (snap.shedKW > 0.5) Pal.red else Pal.inkFaint)
                 }
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // --------------------------------------------------------- Point East
+        PanelCard("Point East  ·  ${PointEast.SECTOR}", accent = Pal.brass.copy(alpha = 0.7f)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("%.0f".format(snap.pointEastConfidence * 100), fontFamily = Mono,
+                    fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Pal.brass)
+                Text("% built out", fontFamily = Mono, fontSize = 10.sp, color = Pal.inkFaint,
+                    modifier = Modifier.padding(bottom = 4.dp, start = 2.dp))
+                Spacer(Modifier.weight(1f))
+                Text("%.0f kW".format(snap.pointEastDemandKW), fontFamily = Mono,
+                    fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    color = if (snap.pointEastShedKW > 0.5) Pal.red else Pal.ink)
+            }
+            Spacer(Modifier.height(4.dp))
+            BarMeter(
+                "Sector development", snap.pointEastConfidence,
+                "%.0f of %.0f kW".format(snap.pointEastDemandKW, PointEast.DEVELOPED_KW),
+                Pal.brass,
+            )
+            Spacer(Modifier.height(5.dp))
+            val carrying = snap.playerKW >= snap.pointEastDemandKW * 0.90 &&
+                snap.pointEastShedKW < 0.5 && !snap.blackout
+            Text(
+                when {
+                    snap.pointEastShedKW > 0.5 ->
+                        "Sector E is being shed. Every hour dark costs weeks of confidence."
+                    carrying ->
+                        "You are carrying Sector E. Somebody out there is deciding to build."
+                    else ->
+                        "The other stations are carrying Sector E. It stays lit, but nobody " +
+                            "breaks ground on their promises -- put %.0f kW on the bus and they will."
+                                .format(snap.pointEastDemandKW)
+                },
+                fontFamily = Mono, fontSize = 9.sp, lineHeight = 12.sp,
+                color = when {
+                    snap.pointEastShedKW > 0.5 -> Pal.red
+                    carrying -> Pal.green
+                    else -> Pal.inkDim
+                },
+            )
+            Spacer(Modifier.height(4.dp))
+            Readout("Hours carried by you", "%,.0f h".format(sim.grid.pointEastLitHours))
+            Readout("Hours dark", "%,.0f h".format(sim.grid.pointEastDarkHours),
+                colour = if (sim.grid.pointEastDarkHours > 1) Pal.amber else Pal.inkFaint)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -136,9 +184,9 @@ fun GridScreen(host: GameHost) {
             Spacer(Modifier.height(8.dp))
         }
 
-        // -------------------------------------------------------- co-op units
-        PanelCard("The co-op's station") {
-            for (u in sim.grid.stationUnits) {
+        // -------------------------------------------------------- grid authority units
+        PanelCard("The other seven stations") {
+            for (u in sim.grid.stations) {
                 val colour = when {
                     u.failed -> Pal.red
                     u.starting -> Pal.amber
@@ -156,8 +204,8 @@ fun GridScreen(host: GameHost) {
                     )
                     Spacer(Modifier.width(7.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(u.spec.name, fontFamily = Mono, fontSize = 11.sp, color = Pal.ink)
-                        Text(u.spec.make, fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint)
+                        Text(u.spec.company, fontFamily = Mono, fontSize = 11.sp, color = Pal.ink)
+                        Text("${u.spec.sector}  ·  ${u.spec.make}", fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint)
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
@@ -182,7 +230,7 @@ fun GridScreen(host: GameHost) {
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Readout("Co-op capacity", "%.0f kW".format(sim.grid.stationCapacityKW()))
+            Readout("Their combined capacity", "%.0f kW".format(sim.grid.cityStationCapacityKW()))
             Readout("Your installed", "%.0f kW".format(sim.installedKW), colour = Pal.brass)
         }
 

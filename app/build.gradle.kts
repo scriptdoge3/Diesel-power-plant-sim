@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.portannika.app"
+    namespace = "com.pointeast.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.portannika.power"
+        applicationId = "com.pointeast.electrical"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
