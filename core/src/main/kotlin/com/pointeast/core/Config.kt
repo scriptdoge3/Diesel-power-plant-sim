@@ -41,6 +41,24 @@ object Nominal {
     const val VOLT_BAND_PCT = 5.0    // +/- % on the 480 V bus
     const val VOLT_TRIP_HI_PCT = 12.0
     const val VOLT_TRIP_LO_PCT = 15.0
+
+    // -------------------------------------------------------- synchronising
+    //
+    // A generator may only be paralleled inside a genuinely tight window. Get
+    // it wrong and the machine is yanked into step by the whole grid, which
+    // bends couplings and lifts stator bars.
+
+    /** Speed must be within this many rpm of 1800 before the breaker will close. */
+    const val SYNC_SLIP_RPM = 3.0
+
+    /** 1800 rpm is 90 Hz on six poles, so a rpm error is a frequency error. */
+    const val SYNC_SLIP_HZ = SYNC_SLIP_RPM * POLES / 120.0     // 3 rpm = 0.15 Hz
+
+    /** And the machine must be within this many degrees of dead in phase. */
+    const val SYNC_ANGLE_DEG = 5.0
+
+    /** Come in fast, never slow: below this the bus motors you on closing. */
+    const val SYNC_MIN_SLIP_HZ = 0.01
 }
 
 /**

@@ -32,33 +32,10 @@ import com.pointeast.core.LogLevel
 import com.pointeast.core.MILESTONES
 import com.pointeast.core.calendarOf
 
-private enum class OfficeTab { CAREER, LEDGER, LOG }
-
-@Composable
-fun LedgerScreen(host: GameHost) {
-    var tab by rememberSaveable { mutableStateOf(OfficeTab.CAREER) }
-
-    Column(Modifier.padding(horizontal = 10.dp).padding(top = 8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Chip("Career", tab == OfficeTab.CAREER, Pal.brass) { tab = OfficeTab.CAREER }
-            Chip("Ledger", tab == OfficeTab.LEDGER) { tab = OfficeTab.LEDGER }
-            Chip("Log", tab == OfficeTab.LOG) { tab = OfficeTab.LOG }
-        }
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-            when (tab) {
-                OfficeTab.CAREER -> CareerTab(host)
-                OfficeTab.LEDGER -> LedgerTab(host)
-                OfficeTab.LOG -> LogTab(host)
-            }
-        }
-    }
-}
-
 // ------------------------------------------------------------------ career
 
 @Composable
-private fun CareerTab(host: GameHost) {
+fun CareerTab(host: GameHost) {
     val sim = host.sim
     val context = LocalContext.current
     val done = sim.campaign.completed
@@ -69,20 +46,15 @@ private fun CareerTab(host: GameHost) {
             "${done.size} of ${MILESTONES.size}", Pal.brass,
         )
         Spacer(Modifier.height(8.dp))
-        Row {
-            Column(Modifier.weight(1f)) {
-                Readout("Energy delivered", "%,.0f kWh".format(sim.campaign.totalDeliveredKWh))
-                Readout("Peak output", "%.0f kW".format(sim.campaign.peakDeliveredKW))
-                Readout("Installed", "%.0f kW".format(sim.installedKW), colour = Pal.brass)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Readout("Reputation", "%.2f".format(sim.campaign.reputation),
-                    colour = if (sim.campaign.reputation > 0.6) Pal.green else Pal.amber)
-                Readout("Tariff", "%s / kWh".format(sim.money(sim.ratePerKWh)))
-                Readout("Days elapsed", "%.0f".format(sim.gameSeconds / 86400.0))
-            }
-        }
+        Readout("Energy delivered", "%,.0f kWh".format(sim.campaign.totalDeliveredKWh))
+        Readout("Peak output", "%.0f kW".format(sim.campaign.peakDeliveredKW))
+        Readout("Installed capacity", "%.0f kW".format(sim.installedKW), colour = Pal.brass)
+        Readout("Point East built", "%.0f %%".format(sim.grid.pointEastConfidence * 100),
+            colour = Pal.brass)
+        Readout("Reputation", "%.2f".format(sim.campaign.reputation),
+            colour = if (sim.campaign.reputation > 0.6) Pal.green else Pal.amber)
+        Readout("Tariff", "%s / kWh".format(sim.money(sim.ratePerKWh)))
+        Readout("Days elapsed", "%.0f".format(sim.gameSeconds / 86400.0))
     }
 
     Spacer(Modifier.height(8.dp))
@@ -146,7 +118,7 @@ private fun CareerTab(host: GameHost) {
 // ------------------------------------------------------------------ ledger
 
 @Composable
-private fun LedgerTab(host: GameHost) {
+fun LedgerTab(host: GameHost) {
     val sim = host.sim
     val recent = sim.days.takeLast(14)
 
@@ -238,7 +210,7 @@ private fun LedgerTab(host: GameHost) {
 // --------------------------------------------------------------------- log
 
 @Composable
-private fun LogTab(host: GameHost) {
+fun LogTab(host: GameHost) {
     val sim = host.sim
     PanelCard("Station log") {
         val entries = sim.log.toList().reversed()

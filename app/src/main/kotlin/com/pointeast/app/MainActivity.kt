@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,13 +18,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,27 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.Factory
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Upgrade
-import com.pointeast.app.ui.LedgerScreen
-import com.pointeast.app.ui.GridScreen
+import com.pointeast.app.ui.ControlRoomBoard
+import com.pointeast.app.ui.ElectricalBoard
+import com.pointeast.app.ui.RndBoard
 import com.pointeast.app.ui.Mono
 import com.pointeast.app.ui.Pal
-import com.pointeast.app.ui.PanelScreen
-import com.pointeast.app.ui.PlantScreen
 import com.pointeast.app.ui.PointEastTheme
 import com.pointeast.app.ui.StatusBar
-import com.pointeast.app.ui.TechScreen
 import com.pointeast.app.ui.ChapterSheet
 import com.pointeast.app.ui.HelpSheet
 import com.pointeast.app.ui.PrologueSheet
@@ -84,19 +76,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val label: String, val icon: ImageVector) {
-    PANEL("Panel", Icons.Filled.Speed),
-    GRID("Grid", Icons.Filled.Hub),
-    TECH("Upgrades", Icons.Filled.Upgrade),
-    PLANT("Plant", Icons.Filled.Factory),
-    OFFICE("Office", Icons.Filled.AccountBalance),
+private enum class Tab(val label: String) {
+    CONTROL("Control Room"),
+    ELECTRICAL("Electrical"),
+    RND("R & D"),
 }
 
 @Composable
 private fun GameRoot() {
     val host: GameHost = viewModel()
     val context = LocalContext.current
-    var tab by rememberSaveable { mutableStateOf(Tab.PANEL) }
+    var tab by rememberSaveable { mutableStateOf(Tab.CONTROL) }
     var loaded by remember { mutableStateOf(false) }
 
     // Handed to the activity so onPause can flush the world to disk.
@@ -128,36 +118,16 @@ private fun GameRoot() {
     Scaffold(
         containerColor = Pal.bg,
         contentWindowInsets = WindowInsets.safeDrawing,
-        bottomBar = {
-            NavigationBar(containerColor = Pal.panel, tonalElevation = 0.dp) {
-                for (t in Tab.entries) {
-                    NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label, fontSize = 10.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Pal.bg,
-                            selectedTextColor = Pal.blue,
-                            indicatorColor = Pal.blue,
-                            unselectedIconColor = Pal.inkFaint,
-                            unselectedTextColor = Pal.inkFaint,
-                        ),
-                    )
-                }
-            }
-        },
+        bottomBar = { BoardSelector(tab) { tab = it } },
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
             Column(Modifier.fillMaxSize()) {
                 StatusBar(host)
                 Box(Modifier.fillMaxSize()) {
                     when (tab) {
-                        Tab.PANEL -> PanelScreen(host)
-                        Tab.GRID -> GridScreen(host)
-                        Tab.TECH -> TechScreen(host)
-                        Tab.PLANT -> PlantScreen(host)
-                        Tab.OFFICE -> LedgerScreen(host)
+                        Tab.CONTROL -> ControlRoomBoard(host)
+                        Tab.ELECTRICAL -> ElectricalBoard(host)
+                        Tab.RND -> RndBoard(host)
                     }
                 }
             }
@@ -180,6 +150,66 @@ private fun GameRoot() {
 
             host.toast?.let { message ->
                 Toast(message) { host.toast = null }
+            }
+        }
+    }
+}
+
+/**
+ * The board selector: three engraved keys along the bottom of the cabinet,
+ * each with a lamp above it showing which board you are stood at.
+ */
+@Composable
+private fun BoardSelector(selected: Tab, onSelect: (Tab) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Pal.panel, Pal.panelLow)))
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (t in Tab.entries) {
+            val on = t == selected
+            Column(
+                Modifier
+                    .weight(1f)
+                    .background(
+                        Brush.verticalGradient(
+                            if (on) listOf(Pal.panelHigh, Pal.panel)
+                            else listOf(Pal.panelLow, Pal.panelEdge),
+                        ),
+                        RoundedCornerShape(3.dp),
+                    )
+                    .border(
+                        1.dp,
+                        if (on) Pal.brass.copy(alpha = 0.8f) else Pal.panelEdge,
+                        RoundedCornerShape(3.dp),
+                    )
+                    .clickable { onSelect(t) }
+                    .padding(vertical = 7.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // Indicator lamp above the key.
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .background(
+                            if (on) Pal.brass else Pal.lampOff,
+                            RoundedCornerShape(4.dp),
+                        ),
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    t.label.uppercase(),
+                    fontFamily = Mono,
+                    fontSize = 9.sp,
+                    letterSpacing = 0.8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (on) Pal.legendText else Pal.inkFaint,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
         }
     }

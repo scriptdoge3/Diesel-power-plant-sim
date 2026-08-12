@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.PI
@@ -178,6 +179,28 @@ fun AnalogGauge(
                         center = polar(c, r * 0.50f, angleFor(if (frac > 1) 1.0 else 0.0)))
                 }
 
+                // Mirror band. A precision switchboard meter has a strip of
+                // mirror under the scale: you line the needle up with its own
+                // reflection so you are reading it square on. It is the detail
+                // that says "instrument" more than any other.
+                val mirrorR = r * 0.665f
+                drawArc(
+                    color = Color(0x33FFFFFF),
+                    startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
+                    useCenter = false,
+                    topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
+                    size = Size(mirrorR * 2, mirrorR * 2),
+                    style = Stroke(width = r * 0.055f),
+                )
+                drawArc(
+                    color = Pal.dialInkFaint.copy(alpha = 0.55f),
+                    startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
+                    useCenter = false,
+                    topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
+                    size = Size(mirrorR * 2, mirrorR * 2),
+                    style = Stroke(width = r * 0.008f),
+                )
+
                 // Glass: a single soft highlight across the top left.
                 drawArc(
                     brush = Brush.linearGradient(
@@ -190,26 +213,29 @@ fun AnalogGauge(
                 bezelScrews(c, outer)
             }
 
-            // The reading, printed on the lower half of the face.
+            // The reading, printed at the bottom of the face where the needle
+            // cannot cross it.
             Column(
-                Modifier.padding(top = if (compact) 30.dp else 44.dp),
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = if (compact) 9.dp else 15.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     fmt(value, decimals),
                     fontFamily = Mono, fontWeight = FontWeight.Bold,
-                    fontSize = if (compact) 13.sp else 18.sp,
-                    color = Pal.dialInk,
+                    fontSize = if (compact) 12.sp else 17.sp,
+                    color = Pal.dialInk, maxLines = 1, softWrap = false,
                 )
                 Text(unit, fontFamily = Mono, fontSize = if (compact) 7.sp else 9.sp,
-                    color = Pal.dialInkFaint)
+                    color = Pal.dialInkFaint, maxLines = 1)
             }
         }
 
         LegendPlate(label, Modifier.padding(top = 4.dp))
         if (subtitle != null) {
             Text(subtitle, fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(top = 1.dp))
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp))
         }
     }
 }
@@ -242,6 +268,8 @@ fun LegendPlate(text: String, modifier: Modifier = Modifier, wide: Boolean = fal
 fun Synchroscope(
     angleDeg: Double,
     slipHz: Double,
+    slipRpm: Double,
+    windowDeg: Double,
     inWindow: Boolean,
     live: Boolean,
     modifier: Modifier = Modifier,
@@ -266,10 +294,13 @@ fun Synchroscope(
                 startAngle = 90f, sweepAngle = 180f, useCenter = true,
                 topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
             )
-            // The closing window either side of top dead centre.
+            // The closing window either side of top dead centre. This is the
+            // real +/- 5 degrees the breaker will accept, not a generous
+            // illustration of it.
             drawArc(
-                color = if (live) Pal.green.copy(alpha = 0.42f) else Pal.dialInkFaint.copy(alpha = 0.12f),
-                startAngle = -102f, sweepAngle = 24f, useCenter = true,
+                color = if (live) Pal.green.copy(alpha = 0.55f) else Pal.dialInkFaint.copy(alpha = 0.12f),
+                startAngle = -90f - windowDeg.toFloat(), sweepAngle = windowDeg.toFloat() * 2f,
+                useCenter = true,
                 topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
             )
 
@@ -307,18 +338,19 @@ fun Synchroscope(
         }
 
         Column(
-            Modifier.padding(top = 52.dp),
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (live) "%+.2f".format(slipHz) else "-- --",
-                fontFamily = Mono, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                if (live) "%+.1f".format(slipRpm) else "--",
+                fontFamily = Mono, fontSize = 13.sp, fontWeight = FontWeight.Bold,
                 color = if (!live) Pal.dialInkFaint
-                else if (slipHz in 0.02..0.30) Color(0xFF1E6B36) else Pal.needleRed,
+                else if (inWindow) Color(0xFF1E6B36) else Pal.needleRed,
             )
             Text(
-                if (!live) "" else if (slipHz > 0.005) "FAST" else if (slipHz < -0.005) "SLOW" else "",
-                fontFamily = Mono, fontSize = 7.sp, color = Pal.dialInkFaint,
+                if (!live) "RPM" else if (slipRpm > 0.1) "RPM FAST"
+                else if (slipRpm < -0.1) "RPM SLOW" else "RPM",
+                fontFamily = Mono, fontSize = 7.sp, color = Pal.dialInkFaint, maxLines = 1,
             )
         }
     }
@@ -448,20 +480,51 @@ fun PanelCard(
     accent: Color = Pal.panelEdge,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier
-            .background(Pal.panel, RoundedCornerShape(4.dp))
-            .border(1.dp, accent.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
-            .padding(9.dp),
-    ) {
-        if (title != null) {
-            LegendPlate(title, Modifier.padding(bottom = 7.dp), wide = true)
+    val shape = RoundedCornerShape(3.dp)
+    Box(modifier) {
+        Column(
+            Modifier
+                // Wrinkle-finish paint: lit from above, darker toward the
+                // bottom of the pressing, with a hard seam all round.
+                .background(
+                    Brush.verticalGradient(listOf(Pal.panelHigh, Pal.panel, Pal.panelLow)),
+                    shape,
+                )
+                .border(1.dp, accent.copy(alpha = 0.9f), shape)
+                .padding(horizontal = 11.dp, vertical = 10.dp),
+        ) {
+            if (title != null) {
+                LegendPlate(title, Modifier.padding(bottom = 7.dp), wide = true)
+            }
+            content()
         }
-        content()
+        // Four fasteners holding the pressing to the frame.
+        Canvas(Modifier.matchParentSize()) {
+            val inset = 5.dp.toPx()
+            val rad = 1.9.dp.toPx()
+            for (x in listOf(inset, size.width - inset)) {
+                for (y in listOf(inset, size.height - inset)) {
+                    drawCircle(Pal.panelEdge.copy(alpha = 0.7f), radius = rad * 1.35f,
+                        center = Offset(x, y))
+                    drawCircle(Pal.screw.copy(alpha = 0.65f), radius = rad, center = Offset(x, y))
+                    drawLine(
+                        Pal.panelEdge.copy(alpha = 0.8f),
+                        Offset(x - rad * 0.7f, y - rad * 0.7f),
+                        Offset(x + rad * 0.7f, y + rad * 0.7f),
+                        strokeWidth = 1f,
+                    )
+                }
+            }
+        }
     }
 }
 
 /** A key/value readout row, monospaced so the columns line up. */
+/**
+ * A key/value row. The value takes the width it needs and the label gives way,
+ * because a truncated label is readable and a number broken one digit per line
+ * is not.
+ */
 @Composable
 fun Readout(
     label: String,
@@ -470,10 +533,18 @@ fun Readout(
     colour: Color = Pal.ink,
 ) {
     Row(
-        modifier.fillMaxWidth().padding(vertical = 1.dp),
+        modifier.fillMaxWidth().padding(vertical = 1.5.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim)
-        Text(value, fontFamily = Mono, fontSize = 10.sp, color = colour, fontWeight = FontWeight.Medium)
+        Text(
+            label, fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(end = 8.dp),
+        )
+        Text(
+            value, fontFamily = Mono, fontSize = 10.sp, color = colour,
+            fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false,
+        )
     }
 }

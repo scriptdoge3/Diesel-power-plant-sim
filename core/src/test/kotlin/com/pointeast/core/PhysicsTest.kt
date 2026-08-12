@@ -41,8 +41,10 @@ class PhysicsTest {
             if (c.voltErrPct > 1.0) u.fieldRheostat -= 0.0015
             if (c.voltErrPct < -1.0) u.fieldRheostat += 0.0015
             u.fieldRheostat = u.fieldRheostat.clamp(0.0, 1.0)
-            if (c.slipHz < 0.08) u.speederPU += 0.00004
-            if (c.slipHz > 0.22) u.speederPU -= 0.00004
+            // Aim for the middle of the closing window: fast, by about
+            // half of the three rpm the breaker will accept.
+            if (c.slipHz < Nominal.SYNC_SLIP_HZ * 0.35) u.speederPU += 0.00004
+            if (c.slipHz > Nominal.SYNC_SLIP_HZ * 0.80) u.speederPU -= 0.00004
             sim.update(0.05)
             val c2 = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
             if (c2.allOk && c2.directionOk) {
@@ -199,6 +201,117 @@ class PhysicsTest {
     }
 
     // ---------------------------------------------------------- synchronising
+
+    @Test
+    fun `the breaker refuses to close outside three rpm and five degrees`() {
+        val sim = Sim(9001)
+        val u = sim.foundingSet
+        sim.startUnit("g1")
+        runSim(sim, 45.0)
+        u.fieldRheostat = 0.62
+        runSim(sim, 30.0)
+        // Match volts so only speed and phase are in question.
+        var guard = 0
+        while (guard++ < 9000 &&
+            abs(u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU).voltErrPct) > 1.0
+        ) {
+            val c = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
+            u.fieldRheostat = (u.fieldRheostat - 0.0008 * c.voltErrPct.coerceIn(-2.0, 2.0))
+                .clamp(0.0, 1.0)
+            sim.update(0.05)
+        }
+
+        val busRpm = sim.grid.frequencyHz * 120.0 / Nominal.POLES
+        fun place(rpmOffset: Double, angle: Double) {
+            u.rpm = busRpm + rpmOffset
+            u.prevPhaseDeg = angle
+            u.phaseDeg = angle
+        }
+
+        // Dead in phase, but four rpm fast.
+        place(4.0, 0.0)
+        assertEquals("four rpm fast must be refused", -1.0,
+            u.closeBreaker(sim.grid.frequencyHz, sim.grid.busVoltPU, false), 1e-9)
+        assertTrue(!u.onBus)
+
+        // Speed fine, but eight degrees out of phase.
+        place(2.0, 8.0)
+        assertEquals("eight degrees out must be refused", -1.0,
+            u.closeBreaker(sim.grid.frequencyHz, sim.grid.busVoltPU, false), 1e-9)
+        assertTrue(!u.onBus)
+
+        // Coming in slow is refused even when everything else is perfect,
+        // because the bus would motor the machine on closing.
+        place(-1.0, 0.0)
+        val slow = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
+        assertTrue("a machine coming in slow is not ready", !slow.directionOk)
+
+        // Two rpm fast and three degrees: inside the window.
+        place(2.0, 3.0)
+        val c = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
+        println("accepted at %+.1f rpm, %+.0f deg, %+.1f%% volts"
+            .format(c.slipRpm, c.angleDeg, c.voltErrPct))
+        assertTrue("two rpm and three degrees should be inside the window", c.allOk)
+        val shock = u.closeBreaker(sim.grid.frequencyHz, sim.grid.busVoltPU, false)
+        assertTrue("a close inside the window should be accepted", shock >= 0.0)
+        assertTrue(u.onBus)
+        assertTrue("and it should be a gentle close, was $shock", shock < 1.5)
+    }
+
+    @Test
+    fun `frequency moves when generation and demand disagree`() {
+        val sim = Sim(4711)
+        runSim(sim, 900.0, scale = 5)
+        val f0 = sim.grid.frequencyHz
+        val biggest = sim.grid.stations.filter { it.online }.maxBy { it.spec.kW }
+
+        biggest.stop()
+        repeat(200) { sim.update(0.05) }        // ten seconds, before anyone reacts
+        val f1 = sim.grid.frequencyHz
+        println("lost %.0f kW: %.3f -> %.3f Hz".format(biggest.spec.kW, f0, f1))
+        assertTrue("losing a station must pull the frequency down", f1 < f0 - 0.15)
+
+        // The other operators then trim their speeders and bring it back into
+        // the band. They do not chase it to exactly 90 -- nobody stands at a
+        // board all night for a fifth of a hertz.
+        sim.changeTimeScale(15)
+        repeat(8000) { sim.update(0.05) }
+        val f2 = sim.grid.frequencyHz
+        println("recovered to %.3f Hz".format(f2))
+        assertTrue("the grid should come back into the band, was %.3f".format(f2),
+            abs(f2 - Nominal.FREQ) < AGC_DEADBAND_HZ + 0.35)
+    }
+
+    @Test
+    fun `an isolated grid does not sit exactly on its nameplate`() {
+        val sim = Sim(5150)
+        sim.changeTimeScale(15)
+        var lo = 999.0
+        var hi = 0.0
+        var inBand = 0
+        var samples = 0
+        repeat(24000) {
+            sim.update(0.05)
+            val f = sim.grid.frequencyHz
+            if (f > 60.0) {
+                lo = minOf(lo, f); hi = maxOf(hi, f)
+                samples++
+                if (abs(f - Nominal.FREQ) < 1.0) inBand++
+            }
+        }
+        val bandFrac = inBand.toDouble() / samples
+        println("frequency ranged %.2f to %.2f Hz, inside +/-1 Hz for %.0f%% of the time"
+            .format(lo, hi, bandFrac * 100))
+
+        // The point of the deadband: nobody is trimming speeders continuously,
+        // so the frequency rides with the load instead of being pinned.
+        assertTrue("frequency should visibly move with load, not sit on 90.00",
+            hi - lo > 0.15)
+        // But the excursions should be events -- a station tripping -- not the
+        // normal state of the grid.
+        assertTrue("the grid should be in band almost all the time, was %.0f%%"
+            .format(bandFrac * 100), bandFrac > 0.85)
+    }
 
     @Test
     fun `the synchroscope gates a bad close`() {

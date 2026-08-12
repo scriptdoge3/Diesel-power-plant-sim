@@ -34,34 +34,10 @@ import com.pointeast.core.REPAIRS
 import com.pointeast.core.RunState
 import com.pointeast.core.Sim
 
-private enum class PlantTab { PLANT, MACHINES, MARKET }
-
-@Composable
-fun PlantScreen(host: GameHost) {
-    val sim = host.sim
-    var tab by rememberSaveable { mutableStateOf(PlantTab.PLANT) }
-
-    Column(Modifier.padding(horizontal = 10.dp).padding(top = 8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Chip("Plant", tab == PlantTab.PLANT) { tab = PlantTab.PLANT }
-            Chip("Machines", tab == PlantTab.MACHINES) { tab = PlantTab.MACHINES }
-            Chip("Market", tab == PlantTab.MARKET, Pal.brass) { tab = PlantTab.MARKET }
-        }
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-            when (tab) {
-                PlantTab.PLANT -> PlantOverview(host)
-                PlantTab.MACHINES -> MachineList(host)
-                PlantTab.MARKET -> MarketList(host)
-            }
-        }
-    }
-}
-
 // ------------------------------------------------------------------- plant
 
 @Composable
-private fun PlantOverview(host: GameHost) {
+fun PlantOverview(host: GameHost) {
     val sim = host.sim
     val p = sim.plant
 
@@ -105,7 +81,7 @@ private fun PlantOverview(host: GameHost) {
         InfraRow("Medium-speed engine hall", p.hasEngineHall, "Six slots, 700 kW per unit")
         InfraRow("N-1 certification", p.n1Certified, "Required for the baseload contract")
         Spacer(Modifier.height(4.dp))
-        Text("Buy these on the Upgrades screen, under The Plant.",
+        Text("Buy these under R and D, Upgrades, in The Plant branch.",
             fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint)
     }
 
@@ -163,7 +139,7 @@ private fun InfraRow(name: String, have: Boolean, note: String) {
 // ---------------------------------------------------------------- machines
 
 @Composable
-private fun MachineList(host: GameHost) {
+fun MachineList(host: GameHost) {
     val sim = host.sim
     for (u in sim.units) {
         MachineCard(host, sim, u)
@@ -295,14 +271,14 @@ private fun WearRow(label: String, value: Double, verb: String = "worn") {
 // ------------------------------------------------------------------ market
 
 @Composable
-private fun MarketList(host: GameHost) {
+fun MarketList(host: GameHost) {
     val sim = host.sim
     if (!sim.plant.hasSwitchgear) {
         PanelCard("Machinery market") {
             Text(
                 "Nobody will sell you a second generator until you have somewhere to " +
-                    "put it and a way to parallel it. Buy the paralleling switchgear on " +
-                    "the Upgrades screen, under The Plant.",
+                    "put it and a way to parallel it. Buy the paralleling switchgear\n" +
+                    "under R & D, Upgrades, in The Plant branch.",
                 fontSize = 12.sp, color = Pal.inkDim, lineHeight = 17.sp,
             )
         }

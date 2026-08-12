@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pointeast.app.GameHost
@@ -103,9 +104,11 @@ private fun UnitHeader(u: Genset, sim: Sim) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(u.spec.name, fontFamily = Mono, fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold, color = Pal.ink)
-                Text("${u.spec.make}  ·  %.0f kW / %.0f kVA".format(u.spec.ratedKW, u.spec.ratedKVA),
-                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint)
+                    fontWeight = FontWeight.Bold, color = Pal.ink, maxLines = 1)
+                Text(u.spec.make, fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("%.0f kW  ·  %.0f kVA".format(u.spec.ratedKW, u.spec.ratedKVA),
+                    fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint, maxLines = 1)
             }
             val (label, colour) = when (u.runState) {
                 RunState.FAILED -> "FAILED" to Pal.red
@@ -119,7 +122,8 @@ private fun UnitHeader(u: Genset, sim: Sim) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(label, fontFamily = Mono, fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold, color = colour, letterSpacing = 1.sp)
+                    fontWeight = FontWeight.Bold, color = colour, letterSpacing = 1.sp,
+                    maxLines = 1, softWrap = false)
                 Text("%,.0f h".format(u.runHours), fontFamily = Mono, fontSize = 9.sp,
                     color = Pal.inkFaint)
             }
@@ -127,7 +131,7 @@ private fun UnitHeader(u: Genset, sim: Sim) {
         u.failureText?.let {
             Spacer(Modifier.height(4.dp))
             Text(it, fontFamily = Mono, fontSize = 10.sp, color = Pal.red)
-            Text("Repair it on the Plant screen.", fontFamily = Mono, fontSize = 9.sp,
+            Text("Repair it under Control Room, Machines.", fontFamily = Mono, fontSize = 9.sp,
                 color = Pal.inkFaint)
         }
 
@@ -155,13 +159,15 @@ private fun MainMeters(u: Genset) {
     PanelCard {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AnalogGauge(
-                "Frequency", u.freqHz, 80.0, 100.0, "Hz", Modifier.weight(1f), decimals = 1,
+                // Expanded scale. 80-100 Hz put the whole in-band region inside
+                // one tick and made the meter useless for the job it exists for.
+                "Frequency", u.freqHz, 84.0, 96.0, "Hz", Modifier.weight(1f), decimals = 1,
                 bands = listOf(
-                    Triple(80.0, Nominal.FREQ - Nominal.FREQ_BAND, Pal.amber),
+                    Triple(84.0, Nominal.FREQ - Nominal.FREQ_BAND, Pal.amber),
                     Triple(Nominal.FREQ - Nominal.FREQ_BAND, Nominal.FREQ + Nominal.FREQ_BAND, Pal.green),
-                    Triple(Nominal.FREQ + Nominal.FREQ_BAND, 100.0, Pal.red),
+                    Triple(Nominal.FREQ + Nominal.FREQ_BAND, 96.0, Pal.red),
                 ),
-                majorTicks = 5,
+                majorTicks = 6,
                 subtitle = "%.0f rpm".format(u.rpm),
             )
             AnalogGauge(
@@ -280,24 +286,35 @@ private fun SyncAndBreaker(host: GameHost, u: Genset) {
                 Synchroscope(
                     angleDeg = if (live) u.phaseDeg else 0.0,
                     slipHz = check.slipHz,
+                    slipRpm = check.slipRpm,
+                    windowDeg = Nominal.SYNC_ANGLE_DEG,
                     inWindow = ready,
                     live = live,
                 )
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                SyncRow("SLIP", "%+.2f Hz".format(check.slipHz), check.slipOk && check.directionOk)
-                SyncRow("ANGLE", "%+.0f°".format(check.angleDeg), check.angleOk)
+                SyncRow("SPEED", "%+.1f rpm".format(check.slipRpm),
+                    check.slipOk && check.directionOk)
+                SyncRow("PHASE", "%+.0f°".format(check.angleDeg), check.angleOk)
                 SyncRow("VOLTS", "%+.1f%%".format(check.voltErrPct), check.voltOk)
+                Text(
+                    "limits  ±%.0f rpm  ±%.0f°".format(
+                        Nominal.SYNC_SLIP_RPM, Nominal.SYNC_ANGLE_DEG),
+                    fontFamily = Mono, fontSize = 8.sp, color = Pal.inkFaint,
+                    maxLines = 1,
+                )
                 Spacer(Modifier.height(5.dp))
                 Text(
                     when {
                         !live && u.onBus -> "On line."
                         !live -> "Start the machine first."
                         !check.voltOk -> "Match volts with the field."
-                        check.slipHz < 0.02 -> "Too slow -- raise the speeder."
-                        check.slipHz > 0.30 -> "Too fast -- lower the speeder."
-                        !check.angleOk -> "Wait for twelve o'clock."
+                        check.slipHz < Nominal.SYNC_MIN_SLIP_HZ ->
+                            "Slow -- raise the speeder until it creeps clockwise."
+                        check.slipHz > Nominal.SYNC_SLIP_HZ ->
+                            "%.0f rpm fast -- ease the speeder down.".format(check.slipRpm)
+                        !check.angleOk -> "Speed is right. Wait for twelve o'clock."
                         else -> "Ready. Close now."
                     },
                     fontFamily = Mono, fontSize = 9.sp, lineHeight = 12.sp,
@@ -338,9 +355,10 @@ private fun SyncRow(label: String, value: String, ok: Boolean) {
         )
         Spacer(Modifier.width(7.dp))
         Text(label, fontFamily = Mono, fontSize = 9.sp, color = Pal.inkDim,
-            modifier = Modifier.width(44.dp))
+            maxLines = 1, softWrap = false, modifier = Modifier.width(52.dp))
         Text(value, fontFamily = Mono, fontSize = 12.sp,
-            color = if (ok) Pal.green else Pal.amber, fontWeight = FontWeight.Bold)
+            color = if (ok) Pal.green else Pal.amber, fontWeight = FontWeight.Bold,
+            maxLines = 1, softWrap = false)
     }
 }
 
@@ -396,7 +414,7 @@ private fun GovernorControls(host: GameHost, u: Genset) {
         Spacer(Modifier.height(9.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("DROOP", fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim,
-                modifier = Modifier.width(52.dp))
+                maxLines = 1, softWrap = false, modifier = Modifier.width(56.dp))
             Slider(
                 value = u.droop.toFloat(),
                 onValueChange = { sim.setDroop(u.id, it.toDouble()) },
@@ -435,7 +453,7 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
         if (u.spec.avr) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("SET V", fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim,
-                    modifier = Modifier.width(50.dp))
+                    maxLines = 1, softWrap = false, modifier = Modifier.width(56.dp))
                 Slider(
                     value = u.avrSetpointPU.toFloat(),
                     onValueChange = { sim.setAvrSetpoint(u.id, it.toDouble()) },

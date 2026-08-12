@@ -100,7 +100,7 @@ class Sim(seed: Int = 20260811) {
         first.batterySoC = 0.62
         first.coolantC = 6.0; first.oilC = 6.0; first.windingC = 6.0
         units += first
-        grid.updateWeather(gameSeconds)
+        grid.primeAtStart(gameSeconds, 0.0)
         market.refresh(currentDay(), plant, campaign.reputation)
         logMsg("Point East Electrical. Set 1 is yours; the other seven are the grid authority.", LogLevel.INFO)
         logMsg("Sync to the station bus and start selling. The goal is a megawatt of your own.", LogLevel.INFO)
@@ -153,7 +153,8 @@ class Sim(seed: Int = 20260811) {
         for (u in units) u.preStep(dt, env, grid.frequencyHz)
 
         // ---- dispatch and automation -----------------------------------
-        val demandNow = grid.baseDemandKW(gameSeconds, growthYears)
+        val demandNow = grid.baseDemandKW(gameSeconds, growthYears) +
+            grid.pointEastBaseKW(gameSeconds)
         // Credit the player only for power actually flowing, and discount it:
         // the grid authority will not shed its own reserve on the strength of a machine
         // that might open its breaker in the next minute.
@@ -332,9 +333,11 @@ class Sim(seed: Int = 20260811) {
                 else if (!u.onBus && u.spec.autoSync) {
                     val c = u.syncCheck(grid.frequencyHz, grid.busVoltPU)
                     // Walk the speeder until the slip is right, then close.
-                    u.speederPU = if (c.slipHz < 0.05) (u.speederPU + 0.0006).coerceAtMost(GovernorBase.SPEEDER_MAX)
-                    else if (c.slipHz > 0.25) (u.speederPU - 0.0006).coerceAtLeast(GovernorBase.SPEEDER_MIN)
-                    else u.speederPU
+                    // Walk the speeder until the slip sits inside the closing
+                    // window: fast, but by less than three rpm.
+                    val want = Nominal.SYNC_SLIP_HZ * 0.55
+                    u.speederPU = (u.speederPU + (want - c.slipHz).clamp(-0.0008, 0.0008))
+                        .clamp(GovernorBase.SPEEDER_MIN, GovernorBase.SPEEDER_MAX)
                     if (c.allOk && c.directionOk) u.closeBreaker(grid.frequencyHz, grid.busVoltPU, false)
                 } else if (u.onBus) {
                     val share = target / units.count { it.onBus }.coerceAtLeast(1)

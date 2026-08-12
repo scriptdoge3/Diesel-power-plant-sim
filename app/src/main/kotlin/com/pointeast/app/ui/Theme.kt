@@ -4,6 +4,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -25,11 +28,11 @@ import androidx.compose.ui.unit.sp
  */
 object Pal {
     // Painted steel cabinet
-    val bg = Color(0xFF23292A)          // shadow between panels
-    val panel = Color(0xFF3A4442)       // machinery grey-green
-    val panelHigh = Color(0xFF47524F)   // raised section
-    val panelLow = Color(0xFF2C3433)    // recessed section
-    val panelEdge = Color(0xFF1B2120)   // panel seam
+    val bg = Color(0xFF1E2422)          // shadow between panels
+    val panel = Color(0xFF414B45)       // machinery grey-green, ASA 61 with a cast
+    val panelHigh = Color(0xFF4D5851)   // raised section, catching the light
+    val panelLow = Color(0xFF313A36)    // recessed section
+    val panelEdge = Color(0xFF141917)   // panel seam
     val screw = Color(0xFF8D9691)       // fastener head
 
     // Chrome and brass hardware
@@ -105,8 +108,21 @@ private val Scheme = darkColorScheme(
     outline = Pal.panelEdge,
 )
 
+/** Largest system font scale the panel geometry can absorb. */
+private const val MAX_FONT_SCALE = 1.15f
+
 @Composable
 fun PointEastTheme(content: @Composable () -> Unit) {
-    // The control room is lit the same way whatever the phone thinks.
-    MaterialTheme(colorScheme = Scheme, typography = AppTypography, content = content)
+    // A switchboard is fixed geometry: meters are round, legend plates are
+    // engraved once, and a row of eight lamps has to stay a row of eight
+    // lamps. Text that doubles in size cannot reflow into that, so the scale
+    // is capped -- past the cap the panel would break rather than help.
+    val d = LocalDensity.current
+    val capped = if (d.fontScale <= MAX_FONT_SCALE) d
+    else Density(density = d.density, fontScale = MAX_FONT_SCALE)
+
+    CompositionLocalProvider(LocalDensity provides capped) {
+        // The control room is lit the same way whatever the phone thinks.
+        MaterialTheme(colorScheme = Scheme, typography = AppTypography, content = content)
+    }
 }

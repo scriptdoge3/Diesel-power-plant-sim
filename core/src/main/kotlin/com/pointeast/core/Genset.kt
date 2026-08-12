@@ -109,7 +109,8 @@ class Genset(
     var windingC = 15.0
     var batterySoC = 0.86
     var phaseDeg = 0.0                   // generator angle relative to the bus
-    private var prevPhaseDeg = 0.0
+    /** Where the pointer was last step, so a sweep through twelve can be seen. */
+    var prevPhaseDeg = 0.0
     var huntPhase = 0.0
 
     // ------------------------------------------------------------- outputs
@@ -931,6 +932,7 @@ class Genset(
 
     data class SyncCheck(
         val slipHz: Double,
+        val slipRpm: Double,
         val angleDeg: Double,
         val voltErrPct: Double,
         val slipOk: Boolean,
@@ -951,14 +953,16 @@ class Genset(
             abs(prevPhaseDeg) + abs(phaseDeg) < 120.0
         return SyncCheck(
             slipHz = slip,
+            slipRpm = slip * 120.0 / Nominal.POLES,
             angleDeg = phaseDeg,
             voltErrPct = vErr,
-            slipOk = abs(slip) < 0.30,
-            angleOk = abs(phaseDeg) < 12.0 || sweptThroughZero,
+            // Within three revolutions a minute of 1800.
+            slipOk = abs(slip) <= Nominal.SYNC_SLIP_HZ,
+            angleOk = abs(phaseDeg) <= Nominal.SYNC_ANGLE_DEG || sweptThroughZero,
             voltOk = abs(vErr) < 5.0,
-            // Best practice: come in very slightly fast so you pick up load,
-            // not so the bus motors you.
-            directionOk = slip in 0.02..0.30,
+            // Come in very slightly fast so you pick up load rather than
+            // being motored by the bus the instant the contacts touch.
+            directionOk = slip in Nominal.SYNC_MIN_SLIP_HZ..Nominal.SYNC_SLIP_HZ,
         )
     }
 

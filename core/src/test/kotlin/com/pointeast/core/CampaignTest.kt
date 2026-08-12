@@ -120,8 +120,11 @@ class CampaignTest {
                             .clamp(0.0, 1.0)
                     }
                     val c = u.syncCheck(sim.grid.frequencyHz, sim.grid.busVoltPU)
-                    if (c.slipHz < 0.10) u.speederPU = (u.speederPU + 0.0012).coerceAtMost(1.10)
-                    if (c.slipHz > 0.24) u.speederPU = (u.speederPU - 0.0012).coerceAtLeast(0.93)
+                    // Hold the slip in the middle of the closing window. It is
+                    // only three rpm wide, so this has to be proportional.
+                    val want = Nominal.SYNC_SLIP_HZ * 0.55
+                    u.speederPU = (u.speederPU + ((want - c.slipHz) * 0.05)
+                        .clamp(-0.0010, 0.0010)).clamp(0.93, 1.10)
                     if (c.allOk && c.directionOk) {
                         syncAttempts++
                         sim.closeBreaker(u.id, force = false)
@@ -388,6 +391,27 @@ class CampaignTest {
         assertTrue(sim.foundingSet.fieldRheostat in 0.0..1.0)
         assertTrue("fuel must not exceed the tank", sim.fuelL <= sim.plant.fuelTankL + 1e-6)
         assertTrue("cash must not have been spent on nothing", sim.cash <= Econ.STARTING_CASH)
+    }
+
+    @Test
+    fun `a new career does not open with the city already collapsing`() {
+        val sim = Sim(3)
+        sim.changeTimeScale(1)
+        repeat(300) { sim.update(0.05) }      // the first few seconds on screen
+        val s = sim.lastSnapshot
+        println("boot: f=%.2f Hz  V=%.3f pu  demand=%.0f kW  gen=%.0f kW  shed=%.0f  PE shed=%.0f"
+            .format(s.frequencyHz, s.busVoltsPU, s.cityDemandKW, s.totalGenKW,
+                s.shedKW, s.pointEastShedKW))
+        assertTrue("frequency should be in band at boot, was %.2f".format(s.frequencyHz),
+            kotlin.math.abs(s.frequencyHz - 90.0) < 1.0)
+        assertTrue("bus volts should be up at boot, were %.3f".format(s.busVoltsPU),
+            s.busVoltsPU > 0.93)
+        assertTrue("nothing should be shed at boot, was %.0f kW".format(s.shedKW), s.shedKW < 1.0)
+        assertTrue("Point East must not be dark before the player has done anything",
+            s.pointEastShedKW < 1.0)
+        assertTrue("the other stations should already be carrying the city",
+            s.stationKW > s.cityDemandKW * 0.85)
+        assertTrue("and the player starts with nothing on the bus", s.playerKW < 0.01)
     }
 
     @Test

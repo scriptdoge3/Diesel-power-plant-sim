@@ -4,6 +4,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.pow
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -24,6 +25,13 @@ import kotlin.math.tan
  * ========================================================================== */
 
 const val SYSTEM_BASE_KVA = 1000.0
+
+/**
+ * How far the frequency is allowed to wander before anyone reaches for a
+ * speeder. Inside this the grid just sits where the droop characteristics put
+ * it, which is what makes load changes visible on the meter.
+ */
+const val AGC_DEADBAND_HZ = 0.20
 
 /** One of the other stations. machines. Simplified: no thermodynamics, just droop. */
 class CityStation(val spec: StationSpec) {
@@ -154,6 +162,53 @@ class Grid(private val rng: Rng) {
     /** Secondary control: the grid authority operator trimming speeders to hold 90 Hz. */
     private var agcBias = 0.0
     private var shedSteps = 0
+
+    /**
+     * Dry Green City was running before you turned up.
+     *
+     * Booting with every station cold means the first seconds of a new career
+     * are a frequency collapse, the shedding relays latch, and the player opens
+     * the game to a quarter of the city dark and Point East already losing
+     * confidence -- none of which they did. So the other stations start already
+     * synchronised, loaded, and trimmed to hold 90 Hz.
+     */
+    fun primeAtStart(gameSeconds: Double, growthYears: Double) {
+        updateWeather(gameSeconds)
+        pointEastDemandKW = pointEastBaseKW(gameSeconds)
+        val demand = baseDemandKW(gameSeconds, growthYears) + pointEastDemandKW
+
+        var rated = 0.0
+        for (u in stations.sortedBy { it.spec.priority }) {
+            if (rated >= demand * 1.25) break
+            u.online = true
+            u.starting = false
+            u.startTimer = 0.0
+            rated += u.spec.kW
+        }
+        val online = stations.filter { it.online }
+
+        // The secondary trim that puts the combined droop characteristic
+        // through (demand, 90 Hz):
+        //     P_i = kW_i * (0.55 + bias / droop_i)
+        val sumKW = online.sumOf { it.spec.kW }
+        val sumKWoverDroop = online.sumOf { it.spec.kW / it.spec.droop }
+        agcBias = if (sumKWoverDroop > 0.0)
+            ((demand - 0.55 * sumKW) / sumKWoverDroop).clamp(-0.06, 0.09) else 0.0
+
+        frequencyHz = Nominal.FREQ
+        busVoltPU = 1.0
+        for (u in online) {
+            u.speedSetPU = 1.0 + u.spec.droop * 0.55 + agcBias
+            u.outputKW = u.availableKW(Nominal.FREQ)
+            u.emfPU = 1.45
+        }
+        shedSteps = 0
+        restoreTimer = 0.0
+        blackout = false
+        voltageCollapse = false
+        shedKW = 0.0
+        pointEastShedKW = 0.0
+    }
 
     // ------------------------------------------------------------- weather
 
@@ -373,9 +428,19 @@ class Grid(private val rng: Rng) {
             // Only integrate against a frequency that means something. Letting
             // this wind up while the bus is dead leaves every speeder on its
             // stop when the machines do come back.
+            // These are seven private stations trimmed by hand, not a control
+            // computer. Nobody is stood at the board every second, so the
+            // frequency is allowed to ride with the load inside a band and only
+            // gets pulled back when it leaves one. That is why an isolated grid
+            // built in a hurry never sits exactly on its nameplate, and why you
+            // have to chase the bus a little when you synchronise.
             if (frequencyHz > 70.0) {
                 val err = (Nominal.FREQ - frequencyHz).clamp(-3.0, 3.0)
-                agcBias = (agcBias + err / Nominal.FREQ * dt * 0.10).clamp(-0.06, 0.09)
+                val outsideBand = abs(err) - AGC_DEADBAND_HZ
+                if (outsideBand > 0.0) {
+                    agcBias = (agcBias + sign(err) * outsideBand / Nominal.FREQ * dt * 0.055)
+                        .clamp(-0.06, 0.09)
+                }
             }
             for (u in onlineStation) {
                 u.speedSetPU = 1.0 + u.spec.droop * 0.55 + agcBias
