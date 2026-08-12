@@ -128,9 +128,9 @@ class Campaign {
         if (orders.any { it.status == OrderStatus.OFFERED || it.status == OrderStatus.ACTIVE }) return
 
         orderCounter++
-        val lead = rng.range(1800.0, 10800.0)
+        val lead = rng.range(3600.0, 21600.0)
         val duration = rng.range(3.0, 11.0) * 3600.0
-        val target = (installedKW * rng.range(0.35, 0.85)).coerceAtLeast(15.0)
+        val target = (installedKW * rng.range(0.30, 0.70)).coerceAtLeast(12.0)
         val fee = target * duration / 3600.0 * rng.range(0.06, 0.13) + 60.0
         val reason = rng.pick(listOf(
             "Unit 3 is down for a head gasket",
@@ -168,7 +168,7 @@ class Campaign {
                     if (gameSeconds > o.startAt) {
                         o.status = OrderStatus.EXPIRED
                         ordersMissed++
-                        reputation = (reputation - 0.02).clamp(0.0, 1.0)
+                        reputation = (reputation - 0.012).clamp(0.0, 1.0)
                         results += "Dispatch order expired without an answer" to 0.0
                     }
                 }
@@ -180,21 +180,24 @@ class Campaign {
                     if (playerDeliveredKW >= o.targetKW * 0.95) o.compliedSeconds += dt
                     if (gameSeconds >= o.endAt) {
                         val c = o.complianceFrac
-                        if (c >= 0.90) {
+                        if (c >= 0.85) {
                             o.status = OrderStatus.COMPLETED
                             ordersAnswered++
                             reputation = (reputation + 0.035).clamp(0.0, 1.0)
                             results += "Dispatch order completed (%.0f%%)".format(c * 100) to o.standbyFee
-                        } else if (c >= 0.55) {
+                        } else if (c >= 0.45) {
                             o.status = OrderStatus.COMPLETED
                             ordersAnswered++
-                            reputation = (reputation + 0.005).clamp(0.0, 1.0)
+                            reputation = (reputation + 0.012).clamp(0.0, 1.0)
                             results += "Dispatch order partly met (%.0f%%)".format(c * 100) to o.standbyFee * c
                         } else {
                             o.status = OrderStatus.FAILED
                             ordersMissed++
-                            reputation = (reputation - 0.06).clamp(0.0, 1.0)
-                            results += "Dispatch order failed (%.0f%%)".format(c * 100) to -Econ.PENALTY_REFUSED_DISPATCH
+                            reputation = (reputation - 0.045).clamp(0.0, 1.0)
+                            // Scale the penalty to the size of the job taken on.
+                            val penalty = (o.standbyFee * 0.75)
+                                .coerceIn(40.0, Econ.PENALTY_REFUSED_DISPATCH * 4)
+                            results += "Dispatch order failed (%.0f%%)".format(c * 100) to -penalty
                         }
                     }
                 }

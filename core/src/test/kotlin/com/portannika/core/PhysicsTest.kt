@@ -392,6 +392,11 @@ class PhysicsTest {
             assertTrue("rpm went non-finite", u.rpm.isFinite())
             assertTrue("coolant went non-finite", u.coolantC.isFinite())
             assertTrue("coolant ${u.coolantC} is absurd", u.coolantC in -60.0..200.0)
+            assertTrue("oil temp ${u.oilC} is absurd", u.oilC in -60.0..250.0)
+            assertTrue("EGT ${u.egtC} is absurd", u.egtC in -60.0..1000.0)
+            assertTrue("winding ${u.windingC} is absurd", u.windingC in -60.0..400.0)
+            assertTrue("oil pressure ${u.oilPressureBar} is absurd",
+                u.oilPressureBar in 0.0..EngineBase.OIL_RELIEF_BAR + 0.01)
             assertTrue("wear out of range", u.wear.bearings in 0.0..1.0)
         }
         assertTrue("at least three weeks should have passed, got %.1f days".format(elapsed), elapsed > 20.0)

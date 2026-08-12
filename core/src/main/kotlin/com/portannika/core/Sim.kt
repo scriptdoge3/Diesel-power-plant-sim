@@ -111,13 +111,16 @@ class Sim(seed: Int = 20260811) {
         if (gameDt <= 0.0) return
 
         val quasi = timeScale > QUASI_STEADY_ABOVE
+        // One second, not more: the synchroscope pointer sweeps 36 degrees a
+        // second at a typical closing slip, and a longer stride steps straight
+        // over the window you are trying to close in.
         val dtMax = if (quasi) 1.0 else 0.05
         val n = ceil(gameDt / dtMax).toInt().clamp(1, 150)
         val dt = gameDt / n
         repeat(n) { stepOnce(dt, quasi) }
     }
 
-    private fun stepOnce(dt: Double, quasi: Boolean) {
+    private fun stepOnce(dt: Double, quasiSteady: Boolean) {
         gameSeconds += dt
         grid.updateWeather(gameSeconds)
         grid.spawnRandomEvents(dt, gameSeconds)
@@ -130,16 +133,20 @@ class Sim(seed: Int = 20260811) {
 
         // ---- dispatch and automation -----------------------------------
         val demandNow = grid.baseDemandKW(gameSeconds, growthYears)
-        grid.dispatchStation(demandNow, units.filter { it.onBus }.sumOf { it.spec.ratedKW })
+        // Credit the player only for power actually flowing, and discount it:
+        // the co-op will not shed its own reserve on the strength of a machine
+        // that might open its breaker in the next minute.
+        val playerFirm = units.filter { it.onBus }.sumOf { it.elecKW } * 0.7
+        grid.dispatchStation(demandNow, playerFirm)
         if (autoPlant) runPlantController(dt)
 
         // ---- phase two: the bus ----------------------------------------
-        val snap = grid.step(dt, gameSeconds, growthYears, units, quasi)
+        val snap = grid.step(dt, gameSeconds, growthYears, units, quasiSteady, env)
         lastSnapshot = snap
 
         for (u in units) {
             val assigned = if (u.onBus) u.brakeKW * u.spec.altEff else 0.0
-            u.postStep(dt, env, grid.frequencyHz, grid.busVoltPU, assigned, u.kvar, quasi)
+            u.postStep(dt, env, grid.frequencyHz, grid.busVoltPU, assigned, u.kvar, quasiSteady)
         }
 
         // Consume fuel from the shared tank.
@@ -310,6 +317,23 @@ class Sim(seed: Int = 20260811) {
         }
     }
 
+    /**
+     * Time spent with the spanners is time the rest of the plant keeps running.
+     * Advancing the world properly means the other machines go on making money
+     * and burning fuel while one of them is stripped down.
+     */
+    private fun fastForwardHours(hours: Double) {
+        if (hours <= 0.0) return
+        val total = hours * 3600.0
+        val dt = 60.0
+        var elapsed = 0.0
+        var guard = 0
+        while (elapsed < total && guard++ < 40000) {
+            stepOnce(dt, quasiSteady = true)
+            elapsed += dt
+        }
+    }
+
     // ------------------------------------------------------------- commands
 
     fun changeTimeScale(s: Int) { timeScale = s.clamp(1, 1000) }
@@ -407,13 +431,18 @@ class Sim(seed: Int = 20260811) {
         }
 
         cash -= node.cost
-        ownedTech.add(id)
-        rebuildSpecs()
         postLedger("Upgrade: ${node.name}", -node.cost, "capital")
         daySummary().capital += node.cost
+        fastForwardHours(installHours(node))
+        ownedTech.add(id)
+        rebuildSpecs()
         logMsg("Fitted: ${node.name}. ${node.effect}", LogLevel.GOOD)
         return "Fitted ${node.name}"
     }
+
+    /** How long a job is, roughly: a rheostat is an afternoon, a rebuild is weeks. */
+    fun installHours(node: TechNode): Double =
+        (node.cost / 320.0).clamp(2.0, 90.0)
 
     private fun rebuildSpecs() {
         plant = buildPlantSpec(ownedTech)
@@ -476,8 +505,8 @@ class Sim(seed: Int = 20260811) {
         val cost = item.cost * (0.85 + 0.35 * (u.spec.ratedKW / 50.0).clamp(0.6, 4.0))
         if (cost > cash) return "Not enough cash"
         cash -= cost
+        fastForwardHours(item.hours)
         u.performService(key)
-        gameSeconds += item.hours * 3600.0
         postLedger("${item.name} -- ${u.spec.name}", -cost, "maintenance")
         daySummary().maintenance += cost
         logMsg("${u.spec.name}: ${item.name} done (${item.hours} h).", LogLevel.INFO)
@@ -491,8 +520,8 @@ class Sim(seed: Int = 20260811) {
         val cost = item.cost * (0.8 + 0.4 * (u.spec.ratedKW / 50.0).clamp(0.6, 5.0))
         if (cost > cash) return "Not enough cash"
         cash -= cost
+        fastForwardHours(item.hours)
         u.performRepair(key)
-        gameSeconds += item.hours * 3600.0
         postLedger("${item.name} -- ${u.spec.name}", -cost, "maintenance")
         daySummary().maintenance += cost
         logMsg("${u.spec.name}: ${item.name} complete.", LogLevel.GOOD)

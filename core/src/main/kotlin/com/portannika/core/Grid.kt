@@ -247,6 +247,7 @@ class Grid(private val rng: Rng) {
         growthYears: Double,
         playerUnits: List<Genset>,
         quasiSteady: Boolean,
+        env: Env,
     ): GridSnapshot {
         stepEvents(dt)
 
@@ -316,7 +317,7 @@ class Grid(private val rng: Rng) {
         if (quasiSteady) {
             // Solve for the frequency where droop response meets demand rather
             // than integrating the swing equation at a huge timestep.
-            frequencyHz = solveSteadyFrequency(effectiveDemand, onBusPlayer)
+            frequencyHz = solveSteadyFrequency(effectiveDemand, onBusPlayer, env)
         } else {
             // Swing equation: J omega d(omega)/dt = P_mech - P_elec
             val omega = ((frequencyHz / Nominal.FREQ) * omegaRated).coerceAtLeast(20.0)
@@ -358,19 +359,26 @@ class Grid(private val rng: Rng) {
 
     private var restoreTimer = 0.0
 
-    /** Where the combined droop characteristics cross the demand line. */
-    private fun solveSteadyFrequency(demandKW: Double, playerUnits: List<Genset>): Double {
+    /**
+     * Where the combined droop characteristics cross the demand line.
+     *
+     * The player's machines are evaluated through their own engine model
+     * rather than an idealised straight droop line. Those two do not agree --
+     * a real engine's output is not linear in rack -- and using the idealised
+     * one here hands the machine a frequency its governor cannot support, so
+     * the bus motors it the moment the breaker closes.
+     */
+    private fun solveSteadyFrequency(
+        demandKW: Double,
+        playerUnits: List<Genset>,
+        env: Env,
+    ): Double {
         var lo = Nominal.FREQ * 0.80
         var hi = Nominal.FREQ * 1.08
         repeat(28) {
             val mid = (lo + hi) / 2.0
             var gen = stationUnits.filter { it.online }.sumOf { it.availableKW(mid) }
-            for (g in playerUnits) {
-                val d = g.droop.coerceAtLeast(g.spec.droopMin)
-                gen += if (d <= 1e-4) g.spec.ratedKW * 0.5
-                else (g.spec.ratedKW * (g.speederPU - mid / Nominal.FREQ) / d)
-                    .clamp(-g.spec.ratedKW * 0.1, g.spec.ratedKW * 1.1)
-            }
+            for (g in playerUnits) gen += g.electricalKWAtFrequency(mid, env)
             if (gen > demandKW) lo = mid else hi = mid
         }
         return (lo + hi) / 2.0

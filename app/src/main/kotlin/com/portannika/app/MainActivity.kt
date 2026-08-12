@@ -26,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,7 +97,8 @@ private fun GameRoot() {
     var tab by rememberSaveable { mutableStateOf(Tab.PANEL) }
     var loaded by remember { mutableStateOf(false) }
 
-    MainActivity.hostRef = host
+    // Handed to the activity so onPause can flush the world to disk.
+    SideEffect { MainActivity.hostRef = host }
 
     LaunchedEffect(Unit) {
         if (!loaded) {

@@ -184,7 +184,7 @@ object Weather {
 
 object Econ {
     const val STARTING_CASH = 4200.0
-    const val BASE_RATE_PER_KWH = 0.63     // paid by the co-op at the bus
+    const val BASE_RATE_PER_KWH = 0.78     // paid by the co-op at the bus
     const val FUEL_PRICE_PER_L = 0.94
     const val FUEL_TANK_L = 900.0
     const val HEAT_RATE_PER_KWH_TH = 0.071

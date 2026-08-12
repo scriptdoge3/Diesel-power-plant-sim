@@ -36,7 +36,11 @@ import com.portannika.core.BRANCHES
 import com.portannika.core.NODE_BY_ID
 import com.portannika.core.branchNodes
 import com.portannika.core.buildUnit8Spec
+import com.portannika.core.NODES
 import com.portannika.core.isUnlockable
+
+/** Constant, so it is not refolded on every frame. */
+private val FULLY_DEVELOPED = buildUnit8Spec(NODES.map { it.id }.toSet())
 
 @Composable
 fun TechScreen(host: GameHost) {
@@ -151,6 +155,16 @@ fun TechScreen(host: GameHost) {
                     Text(node.desc, fontSize = 11.sp, color = Pal.inkDim, lineHeight = 15.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(node.effect, fontFamily = Mono, fontSize = 10.sp, color = accent)
+                    if (!ownedNode) {
+                        Text(
+                            "%.0f hours of work%s".format(
+                                sim.installHours(node),
+                                if (node.branch !in listOf("ctrl", "plant", "recov"))
+                                    " with Unit 8 shut down" else "",
+                            ),
+                            fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,
+                        )
+                    }
 
                     if (node.req.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
@@ -191,7 +205,7 @@ fun TechScreen(host: GameHost) {
 
             // Show what the whole tree would be worth, as a target to aim at.
             if (branchId != "plant") {
-                val full = buildUnit8Spec(com.portannika.core.NODES.map { it.id }.toSet())
+                val full = FULLY_DEVELOPED
                 Text(
                     "Fully developed, Unit 8 makes %.0f kW continuous.".format(full.ratedKW),
                     fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,

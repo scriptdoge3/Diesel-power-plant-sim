@@ -109,6 +109,7 @@ class Genset(
     var windingC = 15.0
     var batterySoC = 0.86
     var phaseDeg = 0.0                   // generator angle relative to the bus
+    private var prevPhaseDeg = 0.0
     var huntPhase = 0.0
 
     // ------------------------------------------------------------- outputs
@@ -209,6 +210,7 @@ class Genset(
             integrateFreeSpeed(dt, quasiSteady)
             terminalVoltsPU = emfPU
             // Track the angle against the bus for the synchroscope.
+            prevPhaseDeg = phaseDeg
             phaseDeg = wrapDeg(phaseDeg + (freqHz - systemFreq) * 360.0 * dt)
         }
 
@@ -252,6 +254,12 @@ class Genset(
 
                 if (fuelValveOpen && rpm > EngineBase.FIRE_RPM * coldStartPenalty(env)) {
                     runState = RunState.STARTING; starts++; startAttemptTime = 0.0
+                    // Most bearing wear happens in the seconds before oil
+                    // pressure comes up. Pre-lubing, or a warm engine, avoids it.
+                    val cold = remap(oilC, -10.0, 60.0, 1.0, 0.25)
+                    val dry = if (prelubeRunning) 0.15 else 1.0
+                    wear.bearings = (wear.bearings + 2.2e-4 * cold * dry * spec.wearMul)
+                        .coerceAtMost(1.0)
                 }
                 if (startAttemptTime > 18.0) {
                     alarms += Alarm("START", "Cranked 18 s without a start", false)
@@ -373,6 +381,77 @@ class Genset(
 
     private var massAirKgS = 0.0
 
+    /** Air mass flow and charge temperature at a given speed and boost. */
+    private fun airFlowAt(rpmV: Double, boost: Double, env: Env): Pair<Double, Double> {
+        if (rpmV < 20.0) return 0.0 to env.ambientC
+        val revPerSec = rpmV / 60.0
+        val flowRatio = (rpmV / spec.ratedRPM) * (1.0 + boost)
+        val filterDropPa = 2600.0 * airFilterFouling * spec.filterRestrictMul * flowRatio * flowRatio
+        val manifoldPa = env.baroPa - filterDropPa + boost * 1e5
+        val ambientK = env.ambientC + 273.15
+
+        var chargeK = ambientK + 12.0
+        if (spec.turbo != null && boost > 0.001) {
+            val pr = manifoldPa / (env.baroPa - filterDropPa).coerceAtLeast(40000.0)
+            val ideal = ambientK * pr.pow(0.2857)
+            chargeK = ambientK + (ideal - ambientK) / spec.turbo!!.eff
+            if (spec.aftercoolerEff > 0.0) {
+                chargeK -= spec.aftercoolerEff * (chargeK - (ambientK + 6.0))
+            }
+        }
+        chargeK += (coolantC - env.ambientC).coerceAtLeast(0.0) * 0.06
+
+        val density = manifoldPa / (287.05 * chargeK)
+        val ve = spec.volEff * (1.0 - 0.18 * wear.rings) *
+            (1.0 - 0.10 * (service.valveLash / 2200.0).clamp(0.0, 1.0))
+        return ve * spec.sweptPerRevM3 * revPerSec * density to (chargeK - 273.15)
+    }
+
+    /** Brake power, kW, for a rack position and speed. The engine in one line. */
+    private fun brakeKWAt(rackV: Double, rpmV: Double, env: Env): Double {
+        if (rpmV < 20.0) return 0.0
+        val revPerSec = rpmV / 60.0
+        val boost = if (spec.turbo != null) {
+            val drive = (rackV * (rpmV / spec.ratedRPM).pow(1.25)).clamp(0.0, 1.4)
+            spec.turbo!!.maxBoostBar * (drive * drive).clamp(0.0, 1.0) * (1.0 - 0.35 * wear.turbo)
+        } else 0.0
+        val (air, _) = airFlowAt(rpmV, boost, env)
+
+        val fuelAvail = (1.0 - 0.55 * fuelFilterFouling * fuelFilterFouling).clamp(0.35, 1.0)
+        val maxRate = spec.maxFuelPerStroke * spec.cylinders * revPerSec / 2.0
+        val fuel = (rackV * maxRate * fuelAvail).coerceAtLeast(0.0)
+        if (maxRate <= 1e-12) return 0.0
+
+        val afrV = if (fuel > 1e-7) air / fuel else 99.0
+        val smoke = ((spec.smokeAFR - afrV) / spec.smokeAFR).clamp(0.0, 1.0)
+        val loadFrac = (fuel / maxRate).clamp(0.0, 1.2)
+        val shape = (0.55 + 0.75 * loadFrac - 0.28 * loadFrac * loadFrac).clamp(0.30, 1.0)
+        val etaInd = (spec.indEffPeak * shape * (1.0 + 0.010 * spec.timingAdvance) *
+            (1.0 - 0.16 * wear.injectors) * (1.0 - 1.10 * smoke) *
+            (1.0 - 0.22 * abs(rpmV / spec.ratedRPM - 1.0))).clamp(0.0, 0.52)
+
+        val indicatedW = fuel * EngineBase.LHV * etaInd
+        val frictionW = frictionTorqueAt(rpmV) * (rpmV * 2 * PI / 60.0)
+        val parasiticW = parasiticKWAt(rpmV) * 1000.0
+        return (indicatedW - frictionW - parasiticW) / 1000.0
+    }
+
+    /**
+     * What this machine would settle at if the bus were running at [f].
+     * The grid's steady-state solve uses this so that the frequency it finds
+     * agrees with the power the engine will actually make there -- otherwise a
+     * machine gets handed a frequency its governor cannot support and is
+     * motored by the bus the instant its breaker closes.
+     */
+    fun electricalKWAtFrequency(f: Double, env: Env): Double {
+        if (!isRunning) return 0.0
+        val d = droop.coerceAtLeast(spec.droopMin)
+        val rackAt = if (d <= 1e-4) rack
+        else ((speederPU - f / Nominal.FREQ) / d).clamp(0.0, 1.0)
+        val rpmAt = f * 120.0 / Nominal.POLES
+        return brakeKWAt(rackAt, rpmAt, env) * spec.altEff
+    }
+
     private fun computeAirPath(dt: Double, env: Env) {
         if (rpm < 20.0) { massAirKgS = 0.0; boostBar = 0.0; return }
 
@@ -471,10 +550,12 @@ class Genset(
 
     private var egtTarget = 20.0
 
-    private fun frictionTorque(): Double {
+    private fun frictionTorque(): Double = frictionTorqueAt(rpm)
+
+    private fun frictionTorqueAt(rpmV: Double): Double {
         // FMEP in bar, converted to a torque through the swept volume.
         val visc = viscosityFactor()
-        val fmepBar = (EngineBase.FMEP_A + EngineBase.FMEP_B * (rpm / 1000.0)) *
+        val fmepBar = (EngineBase.FMEP_A + EngineBase.FMEP_B * (rpmV / 1000.0)) *
             (0.90 + 0.20 * visc) * (1.0 + 0.55 * wear.bearings + 0.35 * wear.rings)
         // Work per revolution = FMEP * swept volume; torque = work / 2*pi.
         return fmepBar * 1e5 * spec.sweptPerRevM3 / (2 * PI)
@@ -484,11 +565,13 @@ class Genset(
     private fun compressionDragTorque(): Double =
         if (rpm < EngineBase.CRANK_RPM * 2) 34.0 * (1.0 - rpm / (EngineBase.CRANK_RPM * 3)) else 0.0
 
-    private fun parasiticKW(): Double {
+    private fun parasiticKW(): Double = parasiticKWAt(rpm)
+
+    private fun parasiticKWAt(rpmV: Double): Double {
         val fanFrac = if (spec.fanKW <= 0.5) {
             if (coolantC > 82.0) 1.0 else 0.0            // electric fan, on demand
-        } else (rpm / spec.ratedRPM).pow(3).clamp(0.0, 1.3)  // belt fan, cubed with speed
-        val pumpKW = EngineBase.WATER_PUMP_KW * spec.waterPumpMul * (rpm / spec.ratedRPM).pow(2)
+        } else (rpmV / spec.ratedRPM).pow(3).clamp(0.0, 1.3)  // belt fan, cubed with speed
+        val pumpKW = EngineBase.WATER_PUMP_KW * spec.waterPumpMul * (rpmV / spec.ratedRPM).pow(2)
         return spec.fanKW * fanFrac + pumpKW + EngineBase.FIELD_KW * fieldPU * fieldPU
     }
 
@@ -575,24 +658,34 @@ class Genset(
 
         val uaEff = spec.radiatorUA * thermostat * fanFrac *
             (1.0 - 0.45 * radiatorFouling) * spec.waterPumpMul
-        val qRadW = uaEff * (coolantC - env.ambientC)
 
         // Heat sold into the district loop leaves the jacket before the radiator.
         recoveredHeatKW = if (spec.heatRecoveryFrac > 0.0 && isRunning)
             jacketHeatKW * spec.heatRecoveryFrac else 0.0
         val qJacketW = (jacketHeatKW - recoveredHeatKW) * 1000.0
-
         val heaterW = if (spec.blockHeater && !isRunning && coolantC < 42.0) 2400.0 else 0.0
-        val dCool = (qJacketW - qRadW + heaterW) / (spec.coolantMassKg * EngineBase.COOLANT_CP)
-        coolantC += dCool * dt
+
+        // Both circuits are first-order lags toward an equilibrium temperature.
+        // Solving them in that form rather than stepping the heat balance keeps
+        // them stable at any timestep -- the oil circuit's time constant is
+        // under half a minute with a cooler fitted, so an explicit step will
+        // happily run it to infinity when the game is fast-forwarded.
+        val coolantMassCp = spec.coolantMassKg * EngineBase.COOLANT_CP
+        if (uaEff > 1.0) {
+            val tauCool = coolantMassCp / uaEff
+            val coolantInf = env.ambientC + (qJacketW + heaterW) / uaEff
+            coolantC = approach(coolantC, coolantInf, tauCool, dt)
+        } else {
+            coolantC += (qJacketW + heaterW) / coolantMassCp * dt
+        }
 
         // Oil: friction heat in, coupled to the jacket, helped by an oil cooler.
         val qOilInW = frictionTorque() * (rpm * 2 * PI / 60.0) * EngineBase.OIL_FRICTION_FRAC +
             fuelRateKgS * EngineBase.LHV * 0.025
         val couple = EngineBase.OIL_COUPLING * (if (spec.oilCooler) 3.2 else 1.0)
-        val qOilOutW = couple * (oilC - coolantC)
-        val dOil = (qOilInW - qOilOutW) / (spec.oilMassKg * EngineBase.OIL_CP)
-        oilC += dOil * dt
+        val tauOil = (spec.oilMassKg * EngineBase.OIL_CP) / couple
+        val oilInf = coolantC + qOilInW / couple
+        oilC = approach(oilC, oilInf, tauOil, dt)
 
         // Alternator windings: I^2 R heating against a long thermal time constant.
         val iPU = ampsPU
@@ -601,22 +694,48 @@ class Genset(
         windingC = approach(windingC, targetWinding, AlternatorBase.WINDING_TAU_S, dt)
 
         if (!isRunning) stepThermalOff(dt, env)
+
+        // A guard, not a model: if anything ever does go non-finite, the game
+        // should show a broken engine rather than a broken number.
+        if (!coolantC.isFinite()) coolantC = env.ambientC
+        if (!oilC.isFinite()) oilC = env.ambientC
+        if (!windingC.isFinite()) windingC = env.ambientC
+        if (!egtC.isFinite()) egtC = env.ambientC
+        coolantC = coolantC.clamp(-60.0, 400.0)
+        oilC = oilC.clamp(-60.0, 400.0)
+        windingC = windingC.clamp(-60.0, 500.0)
+        egtC = egtC.clamp(-60.0, 1400.0)
     }
 
     private fun stepThermalOff(dt: Double, env: Env) {
         // Soaking back to ambient once everything stops.
-        val k = 1.0 / 1800.0
-        coolantC += (env.ambientC - coolantC) * k * dt
-        oilC += (env.ambientC - oilC) * k * dt * 0.7
-        windingC += (env.ambientC - windingC) * k * dt * 1.6
+        coolantC = approach(coolantC, env.ambientC, 1800.0, dt)
+        oilC = approach(oilC, env.ambientC, 2570.0, dt)
+        windingC = approach(windingC, env.ambientC, 1125.0, dt)
     }
 
+    /**
+     * What the pump delivers before the bearings' clearance is accounted for:
+     * a function of speed, oil viscosity and how dirty the oil is.
+     */
+    private val supplyPressureBar: Double
+        get() {
+            if (rpm < 30.0) return 0.0
+            return (EngineBase.OIL_PRESS_RATED_BAR * (rpm / spec.ratedRPM).pow(0.85) *
+                viscosityFactor() * spec.oilPressMul * (1.0 - 0.30 * oilCondition))
+                .coerceAtMost(EngineBase.OIL_RELIEF_BAR)
+        }
+
+    /**
+     * Gallery pressure as the gauge reads it. Clearance opens slowly and then
+     * all at once, so the quartic keeps normal wear undramatic and makes a
+     * failing bottom end unmistakable long before it lets go.
+     */
     val oilPressureBar: Double
         get() {
             if (rpm < 30.0) return 0.0
-            val p = EngineBase.OIL_PRESS_RATED_BAR * (rpm / spec.ratedRPM).pow(0.85) *
-                viscosityFactor() * spec.oilPressMul *
-                (1.0 - 0.30 * oilCondition) / (1.0 + 2.6 * wear.bearings)
+            val p = supplyPressureBar /
+                (1.0 + 1.4 * wear.bearings + 6.0 * wear.bearings.pow(4))
             return p.coerceAtMost(EngineBase.OIL_RELIEF_BAR)
         }
 
@@ -629,10 +748,18 @@ class Genset(
         val w = spec.wearMul
 
         // Bearings hate low oil pressure, hot thin oil and dirty oil.
-        val oilPress = oilPressureBar
-        val pressFactor = if (oilPress < 1.4) (1.4 / oilPress.coerceAtLeast(0.15)).pow(2.2) else 1.0
-        val oilFactor = 1.0 + 2.4 * oilCondition + 0.02 * (oilC - 95.0).coerceAtLeast(0.0)
-        wear.bearings += h * 2.9e-5 * w * lf.pow(1.6) * pressFactor * oilFactor
+        //
+        // The pressure used here deliberately excludes the loss caused by the
+        // bearings' own clearance. Worn bearings do drop the gauge, but
+        // feeding that back in as a wear multiplier double-counts the same
+        // clearance and turns ordinary wear into a runaway that eats an engine
+        // in a few hundred hours. What actually thins the oil film is hot,
+        // dirty, low-viscosity oil and a starved pump -- so that is what
+        // drives the rate.
+        val pressFactor = if (supplyPressureBar < 1.4)
+            (1.4 / supplyPressureBar.coerceAtLeast(0.15)).pow(1.6).coerceAtMost(3.0) else 1.0
+        val oilFactor = 1.0 + 1.8 * oilCondition + 0.015 * (oilC - 95.0).coerceAtLeast(0.0)
+        wear.bearings += h * 4.5e-5 * w * lf.pow(1.6) * pressFactor * oilFactor
 
         // Rings and liners: heat and soot.
         val egtFactor = 1.0 + 0.035 * (egtC - EngineBase.EGT_WARN_C).coerceAtLeast(0.0)
@@ -666,7 +793,7 @@ class Genset(
             (rpm / spec.ratedRPM)).coerceAtMost(1.0)
         fuelFilterFouling = (fuelFilterFouling + h * 5.5e-4 * spec.filterRestrictMul).coerceAtMost(1.0)
         radiatorFouling = (radiatorFouling + h * 2.2e-4).coerceAtMost(1.0)
-        oilCondition = (oilCondition + h * (1.6e-3 + 0.9e-3 * lf) *
+        oilCondition = (oilCondition + h * (1.1e-3 + 0.7e-3 * lf) *
             (1.0 + 1.5 * wear.rings)).coerceAtMost(1.0)
 
         clampWear()
@@ -748,7 +875,7 @@ class Genset(
         if (onBus && "32" in spec.protection && elecKW < -spec.ratedKW * 0.08) {
             reversePowerTimer += dt
             alarms += Alarm("32", "REVERSE POWER -- motoring at %.1f kW".format(elecKW), true)
-            if (reversePowerTimer > 5.0) {
+            if (reversePowerTimer > 12.0) {
                 openBreaker("Reverse power relay (32)"); reversePowerTimer = 0.0
             }
         } else reversePowerTimer = 0.0
@@ -817,12 +944,17 @@ class Genset(
     fun syncCheck(busFreq: Double, busVoltPU: Double): SyncCheck {
         val slip = freqHz - busFreq
         val vErr = if (busVoltPU > 0.05) (emfPU - busVoltPU) / busVoltPU * 100.0 else 100.0
+        // The pointer can cross top dead centre entirely within one step when
+        // the game is running fast. Closing "as it passes twelve" has to mean
+        // passing, not being sampled there.
+        val sweptThroughZero = prevPhaseDeg * phaseDeg < 0.0 &&
+            abs(prevPhaseDeg) + abs(phaseDeg) < 120.0
         return SyncCheck(
             slipHz = slip,
             angleDeg = phaseDeg,
             voltErrPct = vErr,
             slipOk = abs(slip) < 0.30,
-            angleOk = abs(phaseDeg) < 12.0,
+            angleOk = abs(phaseDeg) < 12.0 || sweptThroughZero,
             voltOk = abs(vErr) < 5.0,
             // Best practice: come in very slightly fast so you pick up load,
             // not so the bus motors you.
@@ -839,7 +971,12 @@ class Genset(
         val c = syncCheck(busFreq, busVoltPU)
         if (!force && !c.allOk) return -1.0
 
-        val angleRad = phaseDeg * PI / 180.0
+        // If the pointer swept through zero during the step, the breaker
+        // closes at the crossing, not at where the angle happened to land.
+        val sweptThroughZero = prevPhaseDeg * phaseDeg < 0.0 &&
+            abs(prevPhaseDeg) + abs(phaseDeg) < 120.0
+        val effectiveAngle = if (!force && sweptThroughZero) 0.0 else phaseDeg
+        val angleRad = effectiveAngle * PI / 180.0
         // Current surge on closing out of phase, in per-unit of rated.
         val xTotal = (spec.xs * 0.16 + 0.10)     // subtransient plus system
         val shock = abs(2.0 * sin(angleRad / 2.0)) / xTotal +
