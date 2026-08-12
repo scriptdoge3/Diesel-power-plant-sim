@@ -306,6 +306,7 @@ class Sim(seed: Int = 20260811) {
         }
         qualityPenaltyAccum = 0.0
 
+
         // Monthly reliability bonus.
         val cal = calendarOf(gameSeconds)
         if (cal.day == 1 && monthlyBonusDay != d) {
@@ -437,12 +438,22 @@ class Sim(seed: Int = 20260811) {
 
     // -------------------------------------------------------------- economy
 
+    /**
+     * Buy fuel, taking as much as the money runs to.
+     *
+     * This used to be all or nothing, which turned the fuel farm from a reward
+     * into a trap: a 38,900 litre tank means a top-up is a five figure invoice,
+     * so the moment cash dipped below that the plant bought nothing at all and
+     * ran itself dry with a thousand dollars in the bank. Nobody has ever been
+     * refused two hundred litres of diesel for having too small a tanker.
+     */
     fun buyFuel(litres: Double): String {
         val space = plant.fuelTankL - fuelL
-        val take = litres.coerceAtMost(space)
-        if (take <= 1.0) return "Tank is full"
+        if (space <= 1.0) return "Tank is full"
+        val affordable = if (effectiveFuelPrice > 0.0) cash / effectiveFuelPrice else 0.0
+        val take = minOf(litres, space, affordable)
+        if (take <= 1.0) return "Not enough cash for fuel"
         val cost = take * effectiveFuelPrice
-        if (cost > cash) return "Not enough cash"
         cash -= cost
         fuelL += take
         postLedger("Fuel, %.0f L at %s/L".format(take, money(effectiveFuelPrice)), -cost, "fuel")
@@ -576,6 +587,10 @@ class Sim(seed: Int = 20260811) {
         campaign.decline(id)
         logMsg("Declined dispatch order.", LogLevel.WARN)
     }
+
+    /** Test hooks: the cash field is otherwise write-protected. */
+    fun setCashForTest(v: Double) { cash = v }
+    fun drainCashForTest() { cash = 0.0 }
 
     // ------------------------------------------------------------ logging
 

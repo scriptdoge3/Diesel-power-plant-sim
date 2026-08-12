@@ -48,6 +48,7 @@ class CampaignTest {
         var firstFailureDay = -1.0
         private var wasFailed = false
         val wearTrace = mutableListOf<String>()
+        val repTrace = mutableListOf<String>()
         var onBusTicks = 0
         var runTicks = 0
         private var n = 0
@@ -64,6 +65,12 @@ class CampaignTest {
             if (sim.units.any { it.isRunning }) runTicks++
             if (n % 40 == 0) { keepFuelled(); answerDispatch() }
             if (n % 400 == 0) spend()
+            if (n % 12000 == 0) {
+                val c = sim.campaign
+                repTrace += "day %4.0f rep=%.3f full=%d part=%d fail=%d exp=%d dec=%d ms=%d".format(
+                    sim.gameSeconds / 86400.0, c.reputation, c.nFull, c.nPartial,
+                    c.nFailed, c.nExpired, c.nDeclined, c.completed.size)
+            }
         }
 
         private fun keepFuelled() {
@@ -274,6 +281,12 @@ class CampaignTest {
             sim.money(sim.days.sumOf { it.revenue }), sim.money(-sim.days.sumOf { it.fuelCost }),
             sim.money(-sim.days.sumOf { it.maintenance }), sim.money(-sim.days.sumOf { it.capital })))
         println("   orders answered ${sim.campaign.ordersAnswered} missed ${sim.campaign.ordersMissed}")
+        val c = sim.campaign
+        println("   rep ledger: full=${c.nFull} partial=${c.nPartial} failed=${c.nFailed} " +
+            "expired=${c.nExpired} declined=${c.nDeclined}")
+        println("   rep up=%.2f down=%.2f lost to the floor=%.2f  final=%.2f"
+            .format(c.repUp, c.repDown, c.repClippedAtZero, c.reputation))
+        op.repTrace.forEach { println("   $it") }
         println("   first failure: day %.0f".format(op.firstFailureDay))
         for (t in op.wearTrace.take(6)) println("      $t")
         val tally = sim.log.groupingBy { it.text.take(46) }.eachCount()
@@ -412,6 +425,31 @@ class CampaignTest {
         assertTrue("the other stations should already be carrying the city",
             s.stationKW > s.cityDemandKW * 0.85)
         assertTrue("and the player starts with nothing on the bus", s.playerKW < 0.01)
+    }
+
+    @Test
+    fun `a big tank must not stop you buying a small amount of fuel`() {
+        val sim = Sim(77)
+        // Simulate the late game: a fuel farm sized tank and very little cash.
+        sim.setCashForTest(200_000.0)
+        for (id in listOf("ctrl1", "plant1", "plant2", "plant3", "plant5")) {
+            val r = sim.buyTech(id)
+            assertTrue("could not fit $id: $r", r.startsWith("Fitted"))
+        }
+        assertTrue("the fuel farm should be fitted", sim.plant.hasFuelFarm)
+        assertTrue("and the tank should be big", sim.plant.fuelTankL > 30_000.0)
+
+        sim.drainCashForTest()
+        sim.setCashForTest(400.0)
+        val before = sim.fuelL
+        val msg = sim.buyFuel(sim.plant.fuelTankL)   // ask to fill it right up
+        println("with \$400 and a %.0f L tank: %s".format(sim.plant.fuelTankL, msg))
+
+        val bought = sim.fuelL - before
+        assertTrue("four hundred dollars must buy some diesel, got %.0f L".format(bought),
+            bought > 100.0)
+        assertTrue("and it must not spend money it does not have", sim.cash >= -0.01)
+        assertTrue("and it should have spent nearly all of it", sim.cash < 5.0)
     }
 
     @Test

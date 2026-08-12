@@ -92,6 +92,18 @@ class Campaign {
     var ordersMissed = 0
     private var orderCounter = 0
 
+    // Diagnostics: where reputation actually goes over a career.
+    var nFull = 0; var nPartial = 0; var nFailed = 0; var nExpired = 0; var nDeclined = 0
+    var repUp = 0.0; var repDown = 0.0; var repClippedAtZero = 0.0
+
+    /** Apply a reputation change, recording what was lost to the floor. */
+    fun adjustRep(delta: Double) {
+        val raw = reputation + delta
+        if (raw < 0.0) repClippedAtZero += -raw
+        if (delta > 0) repUp += delta else repDown += -delta
+        reputation = raw.clamp(0.0, 1.0)
+    }
+
     val nextMilestone: Milestone? get() = MILESTONES.firstOrNull { it.id !in completed }
 
     fun progressFraction(): Double = completed.size.toDouble() / MILESTONES.size
@@ -182,8 +194,8 @@ class Campaign {
                 OrderStatus.OFFERED -> {
                     if (gameSeconds > o.startAt) {
                         o.status = OrderStatus.EXPIRED
-                        ordersMissed++
-                        reputation = (reputation - 0.012).clamp(0.0, 1.0)
+                        ordersMissed++; nExpired++
+                        adjustRep(-0.012)
                         results += "Dispatch order expired without an answer" to 0.0
                     }
                 }
@@ -197,18 +209,18 @@ class Campaign {
                         val c = o.complianceFrac
                         if (c >= 0.85) {
                             o.status = OrderStatus.COMPLETED
-                            ordersAnswered++
-                            reputation = (reputation + 0.035).clamp(0.0, 1.0)
+                            ordersAnswered++; nFull++
+                            adjustRep(0.035)
                             results += "Dispatch order completed (%.0f%%)".format(c * 100) to o.standbyFee
                         } else if (c >= 0.45) {
                             o.status = OrderStatus.COMPLETED
-                            ordersAnswered++
-                            reputation = (reputation + 0.012).clamp(0.0, 1.0)
+                            ordersAnswered++; nPartial++
+                            adjustRep(0.012)
                             results += "Dispatch order partly met (%.0f%%)".format(c * 100) to o.standbyFee * c
                         } else {
                             o.status = OrderStatus.FAILED
-                            ordersMissed++
-                            reputation = (reputation - 0.045).clamp(0.0, 1.0)
+                            ordersMissed++; nFailed++
+                            adjustRep(-0.045)
                             // Scale the penalty to the size of the job taken on.
                             val penalty = (o.standbyFee * 0.75)
                                 .coerceIn(40.0, Econ.PENALTY_REFUSED_DISPATCH * 4)
@@ -229,11 +241,12 @@ class Campaign {
 
     fun accept(id: String) { orders.find { it.id == id }?.let { if (it.status == OrderStatus.OFFERED) it.status = OrderStatus.ACCEPTED } }
 
+    /** Turning work down costs a little; taking it and failing costs far more. */
     fun decline(id: String) {
         orders.find { it.id == id }?.let {
             if (it.status == OrderStatus.OFFERED) {
                 it.status = OrderStatus.DECLINED
-                reputation = (reputation - 0.015).clamp(0.0, 1.0)
+                nDeclined++; adjustRep(-0.015)
             }
         }
     }
