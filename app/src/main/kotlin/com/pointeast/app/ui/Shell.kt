@@ -2,6 +2,9 @@ package com.pointeast.app.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -23,12 +26,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -101,6 +109,87 @@ fun NudgeButton(text: String, enabled: Boolean = true, big: Boolean = false, onC
             )
             .border(1.dp, Pal.chromeDark.copy(alpha = 0.6f), RoundedCornerShape(3.dp))
             .clickable(enabled = enabled) { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, fontFamily = Mono, fontSize = if (big) 17.sp else 14.sp,
+            color = if (enabled) Pal.ink else Pal.inkFaint, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * A RAISE / LOWER key that runs a motor for as long as you hold it.
+ *
+ * This is what a speeder and a field rheostat actually are. There is no
+ * "increment the setpoint by 0.0035" on a 1962 switchboard; there is a small
+ * motor on the governor spring and a switch, and you hold the switch until the
+ * needle is where you want it. Tapping it three hundred times was never the
+ * job.
+ *
+ * Two things about the implementation matter as much as the motor:
+ *
+ *  * it acts on the touch going **down**, and consumes it. `clickable` waits
+ *    for a clean press and release, and inside a scrolling column a thumb that
+ *    rolls a couple of pixels hands the gesture to the scroller and cancels the
+ *    press. On a phone that is most of them, and it reads as a dead key.
+ *  * the first movement happens on that same touch-down, so a tap is always
+ *    worth exactly [tapStep] and never nothing.
+ *
+ * @param ratePerSecond how far the motor winds per second while held.
+ * @param tapStep how far a single tap moves it.
+ */
+@Composable
+fun MotorKey(
+    text: String,
+    ratePerSecond: Double,
+    tapStep: Double,
+    enabled: Boolean = true,
+    big: Boolean = false,
+    onMove: (Double) -> Unit,
+) {
+    var held by remember { mutableStateOf(false) }
+    val move by rememberUpdatedState(onMove)
+
+    // While the key is down, wind at a steady rate off the frame clock. The
+    // quarter-second wait is what separates a tap from a hold.
+    LaunchedEffect(held, enabled) {
+        if (!held || !enabled) return@LaunchedEffect
+        var last = withFrameNanos { it }
+        var elapsed = 0.0
+        while (true) {
+            val now = withFrameNanos { it }
+            val dt = (now - last) / 1_000_000_000.0
+            last = now
+            elapsed += dt
+            if (elapsed > 0.25) move(ratePerSecond * dt)
+        }
+    }
+
+    Box(
+        Modifier
+            .size(if (big) 52.dp else 44.dp)
+            .background(
+                Brush.verticalGradient(
+                    if (held && enabled) listOf(Pal.brass.copy(alpha = 0.45f), Pal.panelLow)
+                    else listOf(Pal.panelHigh, Pal.panelLow),
+                ),
+                RoundedCornerShape(3.dp),
+            )
+            .border(
+                1.dp,
+                if (held && enabled) Pal.brass else Pal.chromeDark.copy(alpha = 0.6f),
+                RoundedCornerShape(3.dp),
+            )
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()          // the scroller does not get this one
+                    move(tapStep)           // a tap is always worth something
+                    held = true
+                    waitForUpOrCancellation()
+                    held = false
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text, fontFamily = Mono, fontSize = if (big) 17.sp else 14.sp,

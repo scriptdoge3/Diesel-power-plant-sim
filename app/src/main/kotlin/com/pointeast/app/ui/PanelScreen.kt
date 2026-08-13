@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -25,7 +23,30 @@ import com.pointeast.app.GameHost
 import com.pointeast.core.Genset
 import com.pointeast.core.GovernorBase
 import com.pointeast.core.Nominal
+import com.pointeast.core.invLerp
 import kotlin.math.abs
+
+/* ----------------------------------------------------------------------------
+ *  How fast the motorised controls wind, and what a single tap is worth.
+ *
+ *  The old keys stepped 0.0035 pu -- 6.3 rpm -- against a synchronising window
+ *  6.0 rpm wide, so the coarse key could not land inside the window at all, and
+ *  the fine key at 1.08 rpm was under a third of the governor's own 4.0 rpm of
+ *  linkage slop, which is why three or four presses in a row appeared to do
+ *  nothing. Taps are now smaller than the window and holds cross the whole
+ *  range in a few seconds.
+ * -------------------------------------------------------------------------- */
+
+private const val SPEEDER_RATE = 0.022       // pu per second held  (~40 rpm/s)
+private const val SPEEDER_TAP = 0.0012       // pu per tap          (2.2 rpm)
+private const val SPEEDER_RATE_FINE = 0.0035 // pu per second held  (6.3 rpm/s)
+private const val SPEEDER_TAP_FINE = 0.00025 // pu per tap          (0.45 rpm)
+private const val FIELD_RATE = 0.18
+private const val FIELD_TAP = 0.004
+private const val DROOP_RATE = 0.012
+private const val DROOP_TAP = 0.0005
+private const val AVR_RATE = 0.025
+private const val AVR_TAP = 0.0015
 
 /**
  * The switchboard.
@@ -217,8 +238,11 @@ private fun GovernorControls(host: GameHost, u: Genset) {
     val sim = host.sim
     val isoch = u.spec.isoch && u.droop < 0.001
     PanelCard("Governor  ·  ${if (u.spec.egov) "electronic" else "flyweight"}") {
+        // LOWER and RAISE, held rather than tapped -- the speeder is a motor on
+        // the governor spring, and 283 taps to cross its range was never the
+        // job. A tap is a hair's worth; hold it and it winds.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NudgeButton("−", big = true) { sim.adjustSpeeder(u.id, -0.0035) }
+            MotorKey("−", -SPEEDER_RATE, -SPEEDER_TAP, big = true) { sim.adjustSpeeder(u.id, it) }
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -227,33 +251,36 @@ private fun GovernorControls(host: GameHost, u: Genset) {
                     fontFamily = Mono, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                     color = Pal.brass, maxLines = 1,
                 )
-                Slider(
-                    value = u.speederPU.toFloat(),
-                    onValueChange = { sim.setSpeeder(u.id, it.toDouble()) },
-                    valueRange = GovernorBase.SPEEDER_MIN.toFloat()..GovernorBase.SPEEDER_MAX.toFloat(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Pal.chrome, activeTrackColor = Pal.brass.copy(alpha = 0.7f),
-                        inactiveTrackColor = Pal.panelLow,
-                    ),
+                // A position indicator, not a control. A slider inside a
+                // scrolling column loses the drag to the scroller as often as
+                // not, and there is no such thing as a speeder you can slam.
+                Spacer(Modifier.height(4.dp))
+                BarMeter(
+                    "", invLerp(GovernorBase.SPEEDER_MIN, GovernorBase.SPEEDER_MAX, u.speederPU),
+                    "%.0f rpm".format(u.speederPU * Nominal.RPM), Pal.brass,
                 )
+                Spacer(Modifier.height(3.dp))
                 LegendPlate("Speeder  ${"%.3f".format(u.speederPU)} pu", wide = true)
             }
             Spacer(Modifier.width(6.dp))
-            NudgeButton("+", big = true) { sim.adjustSpeeder(u.id, 0.0035) }
+            MotorKey("+", SPEEDER_RATE, SPEEDER_TAP, big = true) { sim.adjustSpeeder(u.id, it) }
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.Center) {
-            NudgeButton("−−") { sim.adjustSpeeder(u.id, -0.0006) }
+            MotorKey("−−", -SPEEDER_RATE_FINE, -SPEEDER_TAP_FINE) { sim.adjustSpeeder(u.id, it) }
             Spacer(Modifier.width(8.dp))
             Text("fine", fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,
                 modifier = Modifier.padding(top = 14.dp))
             Spacer(Modifier.width(8.dp))
-            NudgeButton("++") { sim.adjustSpeeder(u.id, 0.0006) }
+            MotorKey("++", SPEEDER_RATE_FINE, SPEEDER_TAP_FINE) { sim.adjustSpeeder(u.id, it) }
         }
         Text(
-            if (u.onBus) "On the bus the speeder is your kilowatt control, not a speed control."
-            else "Off the bus it sets the no-load speed.",
-            fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint,
+            if (u.onBus) "On the bus the speeder is your kilowatt control, not a speed control. " +
+                "Hold a key to wind it; tap for a hair."
+            else "Off the bus it sets the no-load speed. Hold a key to wind it; tap for a hair. " +
+                "The linkage has %.0f rpm of slop in it, so the first hair may do nothing."
+                    .format(GovernorBase.DEADBAND_PU * (1.0 + 3.0 * u.wear.governor) * Nominal.RPM),
+            fontFamily = Mono, fontSize = 9.sp, lineHeight = 12.sp, color = Pal.inkFaint,
             modifier = Modifier.padding(top = 5.dp),
         )
 
@@ -261,16 +288,11 @@ private fun GovernorControls(host: GameHost, u: Genset) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("DROOP", fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim,
                 maxLines = 1, softWrap = false, modifier = Modifier.width(56.dp))
-            Slider(
-                value = u.droop.toFloat(),
-                onValueChange = { sim.setDroop(u.id, it.toDouble()) },
-                valueRange = u.spec.droopMin.toFloat()..u.spec.droopMax.toFloat(),
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Pal.chrome, activeTrackColor = Pal.blue.copy(alpha = 0.7f),
-                    inactiveTrackColor = Pal.panelLow,
-                ),
-            )
+            MotorKey("−", -DROOP_RATE, -DROOP_TAP) { sim.setDroop(u.id, u.droop + it) }
+            Box(Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                BarMeter("", invLerp(u.spec.droopMin, u.spec.droopMax, u.droop), "", Pal.blue)
+            }
+            MotorKey("+", DROOP_RATE, DROOP_TAP) { sim.setDroop(u.id, u.droop + it) }
             Spacer(Modifier.width(8.dp))
             Text(if (isoch) "ISOCH" else "%.1f%%".format(u.droop * 100),
                 fontFamily = Mono, fontSize = 12.sp, fontWeight = FontWeight.Bold,
@@ -301,16 +323,15 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("SET V", fontFamily = Mono, fontSize = 10.sp, color = Pal.inkDim,
                     maxLines = 1, softWrap = false, modifier = Modifier.width(56.dp))
-                Slider(
-                    value = u.avrSetpointPU.toFloat(),
-                    onValueChange = { sim.setAvrSetpoint(u.id, it.toDouble()) },
-                    valueRange = 0.90f..1.10f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Pal.chrome, activeTrackColor = Pal.violet.copy(alpha = 0.7f),
-                        inactiveTrackColor = Pal.panelLow,
-                    ),
-                )
+                MotorKey("−", -AVR_RATE, -AVR_TAP) {
+                    sim.setAvrSetpoint(u.id, u.avrSetpointPU + it)
+                }
+                Box(Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                    BarMeter("", invLerp(0.90, 1.10, u.avrSetpointPU), "", Pal.violet)
+                }
+                MotorKey("+", AVR_RATE, AVR_TAP) {
+                    sim.setAvrSetpoint(u.id, u.avrSetpointPU + it)
+                }
                 Spacer(Modifier.width(8.dp))
                 Text("%.0f V".format(u.avrSetpointPU * Nominal.GEN_VOLTS),
                     fontFamily = Mono, fontSize = 12.sp, color = Pal.ink,
@@ -323,19 +344,17 @@ private fun ExcitationControls(host: GameHost, u: Genset) {
                 fontFamily = Mono, fontSize = 9.sp, color = Pal.inkFaint, lineHeight = 12.sp,
             )
         } else {
+            // The rheostat wheel: you wind it, you do not tap it a hundred times.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                NudgeButton("−") { sim.setField(u.id, u.fieldRheostat - 0.01) }
-                Slider(
-                    value = u.fieldRheostat.toFloat(),
-                    onValueChange = { sim.setField(u.id, it.toDouble()) },
-                    valueRange = 0f..1f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Pal.chrome, activeTrackColor = Pal.brass.copy(alpha = 0.7f),
-                        inactiveTrackColor = Pal.panelLow,
-                    ),
-                )
-                NudgeButton("+") { sim.setField(u.id, u.fieldRheostat + 0.01) }
+                MotorKey("−", -FIELD_RATE, -FIELD_TAP) {
+                    sim.setField(u.id, u.fieldRheostat + it)
+                }
+                Box(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                    BarMeter("", u.fieldRheostat, "%.0f%%".format(u.fieldRheostat * 100), Pal.brass)
+                }
+                MotorKey("+", FIELD_RATE, FIELD_TAP) {
+                    sim.setField(u.id, u.fieldRheostat + it)
+                }
             }
             Row(Modifier.fillMaxWidth().padding(top = 3.dp),
                 horizontalArrangement = Arrangement.SpaceBetween) {
