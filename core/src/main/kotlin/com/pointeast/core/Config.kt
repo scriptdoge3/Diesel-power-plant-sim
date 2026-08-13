@@ -118,6 +118,27 @@ object EngineBase {
 
     const val OIL_PRESS_RATED_BAR = 3.9
     const val OIL_RELIEF_BAR = 4.3
+
+    /**
+     * Prelube. The electric pump fills the gallery before the engine turns, and
+     * you crank when it has pressure -- not when a clock says so. Warm oil
+     * primes in a second and a half; cold oil, which is thick, takes four or
+     * five. [PRELUBE_MAX_S] is the point at which you accept that the pump is
+     * not going to do it and crank anyway.
+     */
+    const val PRELUBE_TARGET_BAR = 1.0
+    const val PRELUBE_BAR_PER_S = 0.9
+    const val PRELUBE_MAX_S = 8.0
+
+    /**
+     * Cooling down. You idle a diesel until the exhaust is off the turbo and
+     * the heat is out of the head, which is a temperature and not a duration.
+     * [COOLDOWN_MIN_S] is the shortest idle worth calling a cooldown and
+     * [COOLDOWN_MAX_S] is the longest anyone would stand there waiting.
+     */
+    const val COOLDOWN_EGT_C = 260.0
+    const val COOLDOWN_MIN_S = 20.0
+    const val COOLDOWN_MAX_S = 180.0
 }
 
 object AlternatorBase {

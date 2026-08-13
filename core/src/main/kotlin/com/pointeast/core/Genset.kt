@@ -141,8 +141,17 @@ class Genset(
     var failureText: String? = null
     var lastTripReason: String? = null
     var cooldownRemaining = 0.0
+    var cooldownElapsed = 0.0
     var startAttemptTime = 0.0
     var syncShockPU = 0.0
+
+    /**
+     * Gallery pressure put there by the electric prelube pump, with the engine
+     * standing still. It drains back into the sump when the pump stops, which
+     * is why a set left overnight has to be primed again and one restarted five
+     * minutes after shutdown does not.
+     */
+    var primedBar = 0.0
 
     val alarms = mutableListOf<Alarm>()
 
@@ -172,6 +181,7 @@ class Genset(
             return 0.0
         }
 
+        stepPrelubePump(dt)
         stepStartStop(dt, env)
         stepGovernor(dt, if (onBus) systemFreq else freqHz)
         computeAirPath(dt, env)
@@ -232,11 +242,32 @@ class Genset(
 
     // ------------------------------------------------------------ start/stop
 
+    /**
+     * The electric prelube pump.
+     *
+     * It fills the gallery at a rate set by how thick the oil is, and the
+     * gallery drains back when it stops. This is what the operator is actually
+     * waiting for during a prelube, so it is worth being a pressure they can
+     * watch come up rather than a number counting down.
+     */
+    private fun stepPrelubePump(dt: Double) {
+        if (prelubeRunning && rpm < 30.0) {
+            primedBar = (primedBar + dt * EngineBase.PRELUBE_BAR_PER_S / viscosityFactor())
+                .coerceAtMost(EngineBase.PRELUBE_TARGET_BAR * 1.3)
+        } else {
+            primedBar = (primedBar - dt * 0.18).coerceAtLeast(0.0)
+        }
+    }
+
     private fun stepStartStop(dt: Double, env: Env) {
         when (runState) {
             RunState.PRELUBE -> {
                 startAttemptTime += dt
-                if (startAttemptTime > 8.0) { runState = RunState.CRANKING; startAttemptTime = 0.0 }
+                if (primedBar >= EngineBase.PRELUBE_TARGET_BAR ||
+                    startAttemptTime > EngineBase.PRELUBE_MAX_S
+                ) {
+                    runState = RunState.CRANKING; startAttemptTime = 0.0
+                }
             }
             RunState.CRANKING -> {
                 startAttemptTime += dt
@@ -282,12 +313,19 @@ class Genset(
             RunState.RUNNING -> {
                 if (!fuelValveOpen) {
                     runState = if (coolantC > 70.0 && runHours > 0.05) RunState.COOLDOWN else RunState.STOPPED
-                    cooldownRemaining = 180.0
+                    cooldownRemaining = EngineBase.COOLDOWN_MAX_S
+                    cooldownElapsed = 0.0
                 }
             }
             RunState.COOLDOWN -> {
+                // Idle until the heat is out of it, not until a stopwatch says
+                // so. A set that was carrying nothing is cool in half a minute;
+                // one that came off full load takes the long way round.
                 cooldownRemaining -= dt
-                if (cooldownRemaining <= 0.0 || rpm < 40.0) runState = RunState.STOPPED
+                cooldownElapsed += dt
+                val cool = cooldownElapsed >= EngineBase.COOLDOWN_MIN_S &&
+                    egtC < EngineBase.COOLDOWN_EGT_C
+                if (cool || cooldownRemaining <= 0.0 || rpm < 40.0) runState = RunState.STOPPED
             }
             RunState.STOPPED -> {
                 if (starterEngaged) {
@@ -326,6 +364,14 @@ class Genset(
             rpm < EngineBase.FIRE_RPM * coldStartPenalty(Env(coolantC, 0.0)) * 0.98
 
     fun requestStart() {
+        // Still turning: you never stopped, so there is nothing to start. Put
+        // the fuel back on and it picks straight up. Cranking an engine that is
+        // already spinning at idle is how you break a starter.
+        if (runState == RunState.COOLDOWN && rpm > spec.idleRPM * 0.6) {
+            fuelValveOpen = true
+            runState = RunState.RUNNING
+            return
+        }
         if (runState == RunState.STOPPED || runState == RunState.COOLDOWN) {
             fuelValveOpen = true
             starterEngaged = true
@@ -335,6 +381,12 @@ class Genset(
     }
 
     fun requestStop() {
+        // Pressed a second time while it is idling down: secure it now. The
+        // operator has decided the cooldown is long enough and it is their set.
+        if (runState == RunState.COOLDOWN && !fuelValveOpen) {
+            runState = RunState.STOPPED
+            return
+        }
         fuelValveOpen = false
         starterEngaged = false
     }
@@ -774,7 +826,8 @@ class Genset(
             if (rpm < 30.0) return 0.0
             val p = supplyPressureBar /
                 (1.0 + 1.4 * wear.bearings + 6.0 * wear.bearings.pow(4))
-            return p.coerceAtMost(EngineBase.OIL_RELIEF_BAR)
+            // The prelube pump feeds the same gallery and the same gauge.
+            return maxOf(p, primedBar).coerceAtMost(EngineBase.OIL_RELIEF_BAR)
         }
 
     // ------------------------------------------------------- wear & fouling

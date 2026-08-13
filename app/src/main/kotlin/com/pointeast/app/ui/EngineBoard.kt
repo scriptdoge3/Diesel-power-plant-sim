@@ -54,13 +54,19 @@ private fun StartingPanel(host: GameHost, u: Genset) {
     val cold = u.coolantC < 15.0
     PanelCard("Starting") {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // START stays live through the cooldown. The set is idling with the
+            // fuel off and picks straight back up if you change your mind --
+            // locking the key for three minutes was the panel's idea, not the
+            // engine's.
             PanelButton(
                 "START", Modifier.weight(1f),
-                enabled = !u.isRunning && u.runState != RunState.FAILED &&
-                    u.runState != RunState.CRANKING,
+                enabled = u.runState == RunState.STOPPED || u.runState == RunState.COOLDOWN,
                 colour = Pal.green.copy(alpha = 0.30f), textColour = Pal.greenGlow,
             ) { sim.startUnit(u.id) }
-            PanelButton("STOP", Modifier.weight(1f), enabled = u.isRunning) { sim.stopUnit(u.id) }
+            PanelButton(
+                if (u.runState == RunState.COOLDOWN) "SECURE" else "STOP",
+                Modifier.weight(1f), enabled = u.isRunning,
+            ) { sim.stopUnit(u.id) }
             PanelButton("E-STOP", Modifier.weight(1f),
                 colour = Pal.red.copy(alpha = 0.34f), textColour = Pal.redGlow,
             ) { sim.emergencyStop(u.id) }
@@ -86,8 +92,35 @@ private fun StartingPanel(host: GameHost, u: Genset) {
         }
 
         Spacer(Modifier.height(7.dp))
+        // Whatever the machine is in the middle of, say how far through it is.
+        // A wait you can watch is a wait; a wait you cannot is a hang.
+        when (u.runState) {
+            RunState.PRELUBE -> BarMeter(
+                "Priming", u.primedBar / EngineBase.PRELUBE_TARGET_BAR,
+                "%.2f / %.2f bar".format(u.primedBar, EngineBase.PRELUBE_TARGET_BAR), Pal.blue,
+            )
+            RunState.CRANKING -> BarMeter(
+                "Cranking", u.rpm / (EngineBase.FIRE_RPM * 1.6),
+                "%.0f rpm  ·  lights at %.0f".format(u.rpm, EngineBase.FIRE_RPM), Pal.amber,
+            )
+            RunState.COOLDOWN -> BarMeter(
+                "Cooling", 1.0 - (u.egtC / EngineBase.COOLDOWN_EGT_C).coerceIn(0.0, 1.0),
+                "stack %.0f °C  ·  secures below %.0f".format(u.egtC, EngineBase.COOLDOWN_EGT_C),
+                Pal.blue,
+            )
+            else -> if (!u.isRunning && u.coolantC < 55.0) BarMeter(
+                "Block", (u.coolantC + 20.0) / 75.0, "%.0f °C".format(u.coolantC), Pal.amber,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
         Text(
             when {
+                u.runState == RunState.PRELUBE ->
+                    "Prelube pump filling the gallery. It cranks the moment there is " +
+                        "pressure -- cold oil is thick and takes longer to push round."
+                u.runState == RunState.COOLDOWN ->
+                    "Idling the heat out of it. START picks it straight back up; " +
+                        "SECURE shuts it down now."
                 u.runState == RunState.CRANKING && u.tooColdToFire ->
                     "Turning, but not fast enough to light. A cold block pulls the heat " +
                         "straight out of the charge."
@@ -99,7 +132,9 @@ private fun StartingPanel(host: GameHost, u: Genset) {
                             .format(u.coolantC)
                 !u.isRunning -> "Block at %.0f °C. It will start.".format(u.coolantC)
                 u.coolantC < 55.0 ->
-                    "Running but cold. Let it come up before you put load on it."
+                    "Running but cold. Idling will not warm it -- there is no heat in " +
+                        "an engine doing no work. Sync it and give it half load and the " +
+                        "block is up inside two minutes."
                 else -> "Warm. Ready for load."
             },
             fontFamily = Mono, fontSize = 9.sp, lineHeight = 12.sp,
