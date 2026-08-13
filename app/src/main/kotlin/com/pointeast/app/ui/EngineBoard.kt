@@ -119,7 +119,7 @@ private fun EngineGauges(u: Genset) {
     PanelCard("Engine") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AnalogGauge(
-                "Coolant", u.coolantC, -20.0, 120.0, "°C", Modifier.weight(1f),
+                "Coolant", { u.coolantC }, -20.0, 120.0, "°C", Modifier.weight(1f),
                 bands = listOf(
                     Triple(EngineBase.THERMOSTAT_OPEN_C, EngineBase.COOLANT_WARN_C, Pal.green),
                     Triple(EngineBase.COOLANT_WARN_C, EngineBase.COOLANT_TRIP_C, Pal.amber),
@@ -129,7 +129,7 @@ private fun EngineGauges(u: Genset) {
                 subtitle = "oil %.0f °C".format(u.oilC),
             )
             AnalogGauge(
-                "Oil pressure", u.oilPressureBar, 0.0, 5.0, "bar", Modifier.weight(1f),
+                "Oil pressure", { u.oilPressureBar }, 0.0, 5.0, "bar", Modifier.weight(1f),
                 decimals = 1, majorTicks = 5,
                 bands = listOf(
                     Triple(0.0, EngineBase.OIL_PRESS_MIN_BAR, Pal.red),
@@ -140,7 +140,7 @@ private fun EngineGauges(u: Genset) {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             AnalogGauge(
-                "Exhaust", u.egtC, 0.0, 800.0, "°C", Modifier.weight(1f),
+                "Exhaust", { u.egtC }, 0.0, 800.0, "°C", Modifier.weight(1f),
                 compact = true, majorTicks = 4,
                 bands = listOf(
                     Triple(EngineBase.EGT_WARN_C, EngineBase.EGT_LIMIT_C, Pal.amber),
@@ -148,24 +148,24 @@ private fun EngineGauges(u: Genset) {
                 ),
             )
             AnalogGauge(
-                "Speed", u.rpm, 0.0, 2200.0, "rpm", Modifier.weight(1f),
+                "Speed", { u.rpm }, 0.0, 2200.0, "rpm", Modifier.weight(1f),
                 compact = true, majorTicks = 4,
                 bands = listOf(Triple(EngineBase.MAX_SAFE_RPM, 2200.0, Pal.red)),
             )
             if (u.spec.turbo != null) {
                 AnalogGauge(
-                    "Boost", u.boostBar, 0.0, u.spec.turbo!!.maxBoostBar * 1.2, "bar",
+                    "Boost", { u.boostBar }, 0.0, u.spec.turbo!!.maxBoostBar * 1.2, "bar",
                     Modifier.weight(1f), decimals = 2, compact = true, majorTicks = 4,
                 )
             } else {
                 AnalogGauge(
-                    "Fuel rack", u.rack * 100.0, 0.0, 100.0, "%", Modifier.weight(1f),
+                    "Fuel rack", { u.rack * 100.0 }, 0.0, 100.0, "%", Modifier.weight(1f),
                     compact = true, majorTicks = 4,
                     bands = listOf(Triple(92.0, 100.0, Pal.red)),
                 )
             }
             AnalogGauge(
-                "Stator", u.windingC, 0.0, 200.0, "°C", Modifier.weight(1f),
+                "Stator", { u.windingC }, 0.0, 200.0, "°C", Modifier.weight(1f),
                 compact = true, majorTicks = 4,
                 bands = listOf(
                     Triple(u.spec.windingLimitC - 25.0, u.spec.windingLimitC, Pal.amber),

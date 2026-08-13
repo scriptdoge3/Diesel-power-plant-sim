@@ -17,16 +17,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Canvas as AndroidCanvas
+import com.pointeast.app.FrameClock
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,7 +73,167 @@ private fun DrawScope.bezelScrews(c: Offset, r: Float) {
 }
 
 /**
+ * Everything printed on a dial that never changes: the bezel, the paper, the
+ * limit bands, the scale, the mirror strip and the glass. Drawn once into a
+ * bitmap and then stamped, because it is a photograph of a physical object and
+ * re-deriving it sixty times a second is a hundred draw operations an
+ * instrument in aid of a picture that is identical every time.
+ */
+private fun DrawScope.dialFace(
+    min: Double,
+    max: Double,
+    bands: List<Triple<Double, Double, Color>>,
+    majorTicks: Int,
+) {
+    val c = Offset(size.width / 2f, size.height / 2f)
+    val outer = min(size.width, size.height) / 2f
+
+    // Chrome bezel ring, lit from the top left like everything else in the room.
+    drawCircle(
+        brush = Brush.linearGradient(
+            listOf(Pal.chrome, Pal.chromeDark),
+            start = Offset(0f, 0f), end = Offset(size.width, size.height),
+        ),
+        radius = outer, center = c,
+    )
+    val r = outer * 0.88f
+    drawCircle(Pal.panelEdge, radius = outer * 0.91f, center = c)
+
+    // Cream paper face behind glass, slightly darker at the rim.
+    drawCircle(
+        brush = Brush.radialGradient(
+            listOf(Pal.dialFace, Pal.dialFaceEdge),
+            center = Offset(c.x - r * 0.2f, c.y - r * 0.25f), radius = r * 1.5f,
+        ),
+        radius = r, center = c,
+    )
+
+    // Printed limit bands, just inside the scale.
+    val bandR = r * 0.80f
+    for ((from, to, colour) in bands) {
+        val f0 = (from - min) / (max - min)
+        val f1 = (to - min) / (max - min)
+        if (!f0.isFinite() || !f1.isFinite()) continue
+        if (f1 <= 0.0 || f0 >= 1.0 || f1 <= f0) continue
+        val a0 = angleFor(f0)
+        val a1 = angleFor(f1)
+        drawArc(
+            color = colour,
+            startAngle = a0.toFloat(),
+            sweepAngle = (a1 - a0).toFloat(),
+            useCenter = false,
+            topLeft = Offset(c.x - bandR, c.y - bandR),
+            size = Size(bandR * 2, bandR * 2),
+            style = Stroke(width = r * 0.075f),
+        )
+    }
+
+    // Scale: heavy majors, light minors, printed in black.
+    val steps = majorTicks.coerceAtLeast(2)
+    for (i in 0..steps) {
+        val a = angleFor(i.toDouble() / steps)
+        drawLine(Pal.dialInk, polar(c, r * 0.62f, a), polar(c, r * 0.88f, a),
+            strokeWidth = r * 0.040f)
+        if (i < steps) for (j in 1..4) {
+            val am = angleFor((i + j / 5.0) / steps)
+            drawLine(Pal.dialInkFaint, polar(c, r * 0.76f, am), polar(c, r * 0.88f, am),
+                strokeWidth = r * 0.014f)
+        }
+    }
+
+    // Mirror band. A precision switchboard meter has a strip of mirror under
+    // the scale: you line the needle up with its own reflection so you are
+    // reading it square on. It is the detail that says "instrument" more than
+    // any other.
+    val mirrorR = r * 0.665f
+    drawArc(
+        color = Color(0x33FFFFFF),
+        startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
+        useCenter = false,
+        topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
+        size = Size(mirrorR * 2, mirrorR * 2),
+        style = Stroke(width = r * 0.055f),
+    )
+    drawArc(
+        color = Pal.dialInkFaint.copy(alpha = 0.55f),
+        startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
+        useCenter = false,
+        topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
+        size = Size(mirrorR * 2, mirrorR * 2),
+        style = Stroke(width = r * 0.008f),
+    )
+
+    // Glass: a single soft highlight across the top left.
+    drawArc(
+        brush = Brush.linearGradient(
+            listOf(Color(0x24FFFFFF), Color(0x00FFFFFF)),
+            start = Offset(c.x - r, c.y - r), end = Offset(c.x, c.y),
+        ),
+        startAngle = 170f, sweepAngle = 110f, useCenter = true,
+        topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
+    )
+    bezelScrews(c, outer)
+}
+
+/** The moving part: a black tapered pointer with a counterweighted tail. */
+private fun DrawScope.dialNeedle(frac: Double, accent: Color) {
+    val c = Offset(size.width / 2f, size.height / 2f)
+    val r = min(size.width, size.height) / 2f * 0.88f
+    val a = angleFor(frac)
+    val tip = polar(c, r * 0.84f, a)
+    val tail = polar(c, -r * 0.20f, a)
+    val s1 = polar(c, r * 0.050f, a + 90)
+    val s2 = polar(c, r * 0.050f, a - 90)
+    // Shadow on the paper, the way a real needle sits above the face.
+    drawPath(
+        Path().apply {
+            moveTo(tip.x + 2f, tip.y + 2f); lineTo(s1.x + 2f, s1.y + 2f)
+            lineTo(tail.x + 2f, tail.y + 2f); lineTo(s2.x + 2f, s2.y + 2f); close()
+        },
+        color = Color(0x22000000),
+    )
+    drawPath(
+        Path().apply {
+            moveTo(tip.x, tip.y); lineTo(s1.x, s1.y)
+            lineTo(tail.x, tail.y); lineTo(s2.x, s2.y); close()
+        },
+        color = Pal.needle,
+    )
+    // Brass hub cap.
+    drawCircle(Pal.chromeDark, radius = r * 0.105f, center = c)
+    drawCircle(accent, radius = r * 0.075f, center = c)
+
+    // Pinned against a stop: unmistakable, as on a real meter.
+    if (frac > 1.0 || frac < 0.0) {
+        drawCircle(Pal.needleRed, radius = r * 0.06f,
+            center = polar(c, r * 0.50f, angleFor(if (frac > 1) 1.0 else 0.0)))
+    }
+}
+
+/**
+ * Print a piece of fixed dial artwork into a bitmap once and stamp it behind
+ * whatever is drawn on top. Held in a [remember] keyed on the artwork's own
+ * parameters so the plate survives recomposition and is only re-cut when the
+ * instrument changes size or scale.
+ */
+@Composable
+private fun rememberPlate(vararg keys: Any?, art: DrawScope.() -> Unit): Modifier =
+    remember(*keys) {
+        Modifier.drawWithCache {
+            val w = size.width.toInt().coerceAtLeast(1)
+            val h = size.height.toInt().coerceAtLeast(1)
+            val plate = ImageBitmap(w, h)
+            CanvasDrawScope().draw(this, layoutDirection, AndroidCanvas(plate), size) { art() }
+            onDrawBehind { drawImage(plate) }
+        }
+    }
+
+/**
  * A round panel meter.
+ *
+ * The value arrives as a lambda rather than a number on purpose: it is read in
+ * the draw phase, against [FrameClock], so the needle moves at the display rate
+ * while the printed figure underneath is only re-composed when the board is.
  *
  * @param bands coloured arcs printed on the scale. A real instrument tells you
  *   where the limits are without you having to read the number.
@@ -74,7 +241,7 @@ private fun DrawScope.bezelScrews(c: Offset, r: Float) {
 @Composable
 fun AnalogGauge(
     label: String,
-    value: Double,
+    value: () -> Double,
     min: Double,
     max: Double,
     unit: String,
@@ -86,131 +253,16 @@ fun AnalogGauge(
     subtitle: String? = null,
     compact: Boolean = false,
 ) {
+    val face = rememberPlate(min, max, bands, majorTicks) { dialFace(min, max, bands, majorTicks) }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f).then(face),
+            contentAlignment = Alignment.Center,
+        ) {
             Canvas(Modifier.fillMaxSize()) {
-                val c = Offset(size.width / 2f, size.height / 2f)
-                val outer = min(size.width, size.height) / 2f
-
-                // Chrome bezel ring, lit from the top left like everything else
-                // in the room.
-                drawCircle(
-                    brush = Brush.linearGradient(
-                        listOf(Pal.chrome, Pal.chromeDark),
-                        start = Offset(0f, 0f), end = Offset(size.width, size.height),
-                    ),
-                    radius = outer, center = c,
-                )
-                val r = outer * 0.88f
-                drawCircle(Pal.panelEdge, radius = outer * 0.91f, center = c)
-
-                // Cream paper face behind glass, slightly darker at the rim.
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(Pal.dialFace, Pal.dialFaceEdge),
-                        center = Offset(c.x - r * 0.2f, c.y - r * 0.25f), radius = r * 1.5f,
-                    ),
-                    radius = r, center = c,
-                )
-
-                // Printed limit bands, just inside the scale.
-                val bandR = r * 0.80f
-                for ((from, to, colour) in bands) {
-                    val f0 = (from - min) / (max - min)
-                    val f1 = (to - min) / (max - min)
-                    if (!f0.isFinite() || !f1.isFinite()) continue
-                    if (f1 <= 0.0 || f0 >= 1.0 || f1 <= f0) continue
-                    val a0 = angleFor(f0)
-                    val a1 = angleFor(f1)
-                    drawArc(
-                        color = colour,
-                        startAngle = a0.toFloat(),
-                        sweepAngle = (a1 - a0).toFloat(),
-                        useCenter = false,
-                        topLeft = Offset(c.x - bandR, c.y - bandR),
-                        size = Size(bandR * 2, bandR * 2),
-                        style = Stroke(width = r * 0.075f),
-                    )
-                }
-
-                // Scale: heavy majors, light minors, printed in black.
-                val steps = majorTicks.coerceAtLeast(2)
-                for (i in 0..steps) {
-                    val a = angleFor(i.toDouble() / steps)
-                    drawLine(Pal.dialInk, polar(c, r * 0.62f, a), polar(c, r * 0.88f, a),
-                        strokeWidth = r * 0.040f)
-                    if (i < steps) for (j in 1..4) {
-                        val am = angleFor((i + j / 5.0) / steps)
-                        drawLine(Pal.dialInkFaint, polar(c, r * 0.76f, am), polar(c, r * 0.88f, am),
-                            strokeWidth = r * 0.014f)
-                    }
-                }
-
-                // Needle: a black tapered pointer with a counterweighted tail.
-                val raw = if (max > min) (value - min) / (max - min) else 0.0
-                val frac = if (raw.isFinite()) raw else 0.0
-                val a = angleFor(frac)
-                val tip = polar(c, r * 0.84f, a)
-                val tail = polar(c, -r * 0.20f, a)
-                val s1 = polar(c, r * 0.050f, a + 90)
-                val s2 = polar(c, r * 0.050f, a - 90)
-                // Shadow on the paper, the way a real needle sits above the face.
-                drawPath(
-                    Path().apply {
-                        moveTo(tip.x + 2f, tip.y + 2f); lineTo(s1.x + 2f, s1.y + 2f)
-                        lineTo(tail.x + 2f, tail.y + 2f); lineTo(s2.x + 2f, s2.y + 2f); close()
-                    },
-                    color = Color(0x22000000),
-                )
-                drawPath(
-                    Path().apply {
-                        moveTo(tip.x, tip.y); lineTo(s1.x, s1.y)
-                        lineTo(tail.x, tail.y); lineTo(s2.x, s2.y); close()
-                    },
-                    color = Pal.needle,
-                )
-                // Brass hub cap.
-                drawCircle(Pal.chromeDark, radius = r * 0.105f, center = c)
-                drawCircle(accent, radius = r * 0.075f, center = c)
-
-                // Pinned against a stop: unmistakable, as on a real meter.
-                if (frac > 1.0 || frac < 0.0) {
-                    drawCircle(Pal.needleRed, radius = r * 0.06f,
-                        center = polar(c, r * 0.50f, angleFor(if (frac > 1) 1.0 else 0.0)))
-                }
-
-                // Mirror band. A precision switchboard meter has a strip of
-                // mirror under the scale: you line the needle up with its own
-                // reflection so you are reading it square on. It is the detail
-                // that says "instrument" more than any other.
-                val mirrorR = r * 0.665f
-                drawArc(
-                    color = Color(0x33FFFFFF),
-                    startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
-                    useCenter = false,
-                    topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
-                    size = Size(mirrorR * 2, mirrorR * 2),
-                    style = Stroke(width = r * 0.055f),
-                )
-                drawArc(
-                    color = Pal.dialInkFaint.copy(alpha = 0.55f),
-                    startAngle = START_DEG.toFloat(), sweepAngle = SWEEP_DEG.toFloat(),
-                    useCenter = false,
-                    topLeft = Offset(c.x - mirrorR, c.y - mirrorR),
-                    size = Size(mirrorR * 2, mirrorR * 2),
-                    style = Stroke(width = r * 0.008f),
-                )
-
-                // Glass: a single soft highlight across the top left.
-                drawArc(
-                    brush = Brush.linearGradient(
-                        listOf(Color(0x24FFFFFF), Color(0x00FFFFFF)),
-                        start = Offset(c.x - r, c.y - r), end = Offset(c.x, c.y),
-                    ),
-                    startAngle = 170f, sweepAngle = 110f, useCenter = true,
-                    topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
-                )
-                bezelScrews(c, outer)
+                FrameClock.frame                    // redraw, but do not recompose
+                val raw = if (max > min) (value() - min) / (max - min) else 0.0
+                dialNeedle(if (raw.isFinite()) raw else 0.0, accent)
             }
 
             // The reading, printed at the bottom of the face where the needle
@@ -221,7 +273,7 @@ fun AnalogGauge(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    fmt(value, decimals),
+                    fmt(value(), decimals),
                     fontFamily = Mono, fontWeight = FontWeight.Bold,
                     fontSize = if (compact) 12.sp else 17.sp,
                     color = Pal.dialInk, maxLines = 1, softWrap = false,
@@ -258,6 +310,60 @@ fun LegendPlate(text: String, modifier: Modifier = Modifier, wide: Boolean = fal
     }
 }
 
+/** The synchroscope's printed face, everything but the pointer. */
+private fun DrawScope.syncFace(windowDeg: Double, live: Boolean) {
+    val c = Offset(size.width / 2f, size.height / 2f)
+    val outer = min(size.width, size.height) / 2f
+    drawCircle(
+        brush = Brush.linearGradient(
+            listOf(Pal.chrome, Pal.chromeDark),
+            start = Offset(0f, 0f), end = Offset(size.width, size.height),
+        ),
+        radius = outer, center = c,
+    )
+    val r = outer * 0.88f
+    drawCircle(Pal.dialFace, radius = r, center = c)
+
+    // SLOW on the left, FAST on the right, as printed on the face.
+    drawArc(
+        color = Pal.dialInkFaint.copy(alpha = 0.16f),
+        startAngle = 90f, sweepAngle = 180f, useCenter = true,
+        topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
+    )
+    // The closing window either side of top dead centre. This is the real
+    // +/- 5 degrees the breaker will accept, not a generous illustration of it.
+    drawArc(
+        color = if (live) Pal.green.copy(alpha = 0.55f) else Pal.dialInkFaint.copy(alpha = 0.12f),
+        startAngle = -90f - windowDeg.toFloat(), sweepAngle = windowDeg.toFloat() * 2f,
+        useCenter = true,
+        topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
+    )
+
+    for (i in 0 until 24) {
+        val a = i * 15.0 - 90.0
+        val long = i % 6 == 0
+        drawLine(
+            if (long) Pal.dialInk else Pal.dialInkFaint,
+            polar(c, r * (if (long) 0.74f else 0.84f), a),
+            polar(c, r * 0.92f, a),
+            strokeWidth = if (long) 2.6f else 1.2f,
+        )
+    }
+    // Index mark: this is where you close.
+    drawLine(Pal.needleRed, Offset(c.x, c.y - r * 0.96f), Offset(c.x, c.y - r * 0.66f),
+        strokeWidth = 3.5f)
+
+    drawArc(
+        brush = Brush.linearGradient(
+            listOf(Color(0x22FFFFFF), Color(0x00FFFFFF)),
+            start = Offset(c.x - r, c.y - r), end = Offset(c.x, c.y),
+        ),
+        startAngle = 170f, sweepAngle = 110f, useCenter = true,
+        topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
+    )
+    bezelScrews(c, outer)
+}
+
 /**
  * The synchroscope. The pointer turns at the difference between the incoming
  * machine and the running bus. Twelve o'clock is in phase; clockwise means
@@ -266,7 +372,7 @@ fun LegendPlate(text: String, modifier: Modifier = Modifier, wide: Boolean = fal
  */
 @Composable
 fun Synchroscope(
-    angleDeg: Double,
+    angleDeg: () -> Double,
     slipHz: Double,
     slipRpm: Double,
     windowDeg: Double,
@@ -274,67 +380,22 @@ fun Synchroscope(
     live: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier, contentAlignment = Alignment.Center) {
+    val face = rememberPlate(windowDeg, live) { syncFace(windowDeg, live) }
+    Box(modifier.then(face), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
+            // The one pointer in the station that turns continuously. It is
+            // read off the frame clock so it sweeps smoothly however slowly the
+            // rest of the board is being redrawn.
+            FrameClock.frame
             val c = Offset(size.width / 2f, size.height / 2f)
-            val outer = min(size.width, size.height) / 2f
-            drawCircle(
-                brush = Brush.linearGradient(
-                    listOf(Pal.chrome, Pal.chromeDark),
-                    start = Offset(0f, 0f), end = Offset(size.width, size.height),
-                ),
-                radius = outer, center = c,
-            )
-            val r = outer * 0.88f
-            drawCircle(Pal.dialFace, radius = r, center = c)
-
-            // SLOW on the left, FAST on the right, as printed on the face.
-            drawArc(
-                color = Pal.dialInkFaint.copy(alpha = 0.16f),
-                startAngle = 90f, sweepAngle = 180f, useCenter = true,
-                topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
-            )
-            // The closing window either side of top dead centre. This is the
-            // real +/- 5 degrees the breaker will accept, not a generous
-            // illustration of it.
-            drawArc(
-                color = if (live) Pal.green.copy(alpha = 0.55f) else Pal.dialInkFaint.copy(alpha = 0.12f),
-                startAngle = -90f - windowDeg.toFloat(), sweepAngle = windowDeg.toFloat() * 2f,
-                useCenter = true,
-                topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
-            )
-
-            for (i in 0 until 24) {
-                val a = i * 15.0 - 90.0
-                val long = i % 6 == 0
-                drawLine(
-                    if (long) Pal.dialInk else Pal.dialInkFaint,
-                    polar(c, r * (if (long) 0.74f else 0.84f), a),
-                    polar(c, r * 0.92f, a),
-                    strokeWidth = if (long) 2.6f else 1.2f,
-                )
-            }
-            // Index mark: this is where you close.
-            drawLine(Pal.needleRed, Offset(c.x, c.y - r * 0.96f), Offset(c.x, c.y - r * 0.66f),
-                strokeWidth = 3.5f)
-
-            val a = angleDeg - 90.0
+            val r = min(size.width, size.height) / 2f * 0.88f
+            val a = angleDeg() - 90.0
             val tip = polar(c, r * 0.70f, a)
             val tail = polar(c, r * 0.30f, a + 180)
             val col = if (!live) Pal.dialInkFaint else if (inWindow) Color(0xFF1E6B36) else Pal.needle
             drawLine(col, tail, tip, strokeWidth = 4.5f)
             drawCircle(Pal.chromeDark, radius = r * 0.09f, center = c)
             drawCircle(Pal.brass, radius = r * 0.06f, center = c)
-
-            drawArc(
-                brush = Brush.linearGradient(
-                    listOf(Color(0x22FFFFFF), Color(0x00FFFFFF)),
-                    start = Offset(c.x - r, c.y - r), end = Offset(c.x, c.y),
-                ),
-                startAngle = 170f, sweepAngle = 110f, useCenter = true,
-                topLeft = Offset(c.x - r, c.y - r), size = Size(r * 2, r * 2),
-            )
-            bezelScrews(c, outer)
         }
 
         Column(
@@ -472,6 +533,31 @@ fun LoadTrace(
 fun fmt(v: Double, digits: Int): String =
     if (!v.isFinite()) "--" else "%.${digits}f".format(v)
 
+/**
+ * Four fasteners holding the pressing to the frame.
+ *
+ * A draw modifier rather than a Canvas laid over the card: it captures nothing,
+ * so it is a single shared object, and it saves every card in the station a
+ * layout node and a measure pass.
+ */
+private val Fasteners: Modifier = Modifier.drawWithContent {
+    drawContent()
+    val inset = 5.dp.toPx()
+    val rad = 1.9.dp.toPx()
+    val xs = floatArrayOf(inset, size.width - inset)
+    val ys = floatArrayOf(inset, size.height - inset)
+    for (x in xs) for (y in ys) {
+        drawCircle(Pal.panelEdge.copy(alpha = 0.7f), radius = rad * 1.35f, center = Offset(x, y))
+        drawCircle(Pal.screw.copy(alpha = 0.65f), radius = rad, center = Offset(x, y))
+        drawLine(
+            Pal.panelEdge.copy(alpha = 0.8f),
+            Offset(x - rad * 0.7f, y - rad * 0.7f),
+            Offset(x + rad * 0.7f, y + rad * 0.7f),
+            strokeWidth = 1f,
+        )
+    }
+}
+
 /** A raised panel section with an engraved heading plate. */
 @Composable
 fun PanelCard(
@@ -481,41 +567,22 @@ fun PanelCard(
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(3.dp)
-    Box(modifier) {
-        Column(
-            Modifier
-                // Wrinkle-finish paint: lit from above, darker toward the
-                // bottom of the pressing, with a hard seam all round.
-                .background(
-                    Brush.verticalGradient(listOf(Pal.panelHigh, Pal.panel, Pal.panelLow)),
-                    shape,
-                )
-                .border(1.dp, accent.copy(alpha = 0.9f), shape)
-                .padding(horizontal = 11.dp, vertical = 10.dp),
-        ) {
-            if (title != null) {
-                LegendPlate(title, Modifier.padding(bottom = 7.dp), wide = true)
-            }
-            content()
+    Column(
+        modifier
+            // Wrinkle-finish paint: lit from above, darker toward the bottom of
+            // the pressing, with a hard seam all round.
+            .background(
+                Brush.verticalGradient(listOf(Pal.panelHigh, Pal.panel, Pal.panelLow)),
+                shape,
+            )
+            .border(1.dp, accent.copy(alpha = 0.9f), shape)
+            .then(Fasteners)
+            .padding(horizontal = 11.dp, vertical = 10.dp),
+    ) {
+        if (title != null) {
+            LegendPlate(title, Modifier.padding(bottom = 7.dp), wide = true)
         }
-        // Four fasteners holding the pressing to the frame.
-        Canvas(Modifier.matchParentSize()) {
-            val inset = 5.dp.toPx()
-            val rad = 1.9.dp.toPx()
-            for (x in listOf(inset, size.width - inset)) {
-                for (y in listOf(inset, size.height - inset)) {
-                    drawCircle(Pal.panelEdge.copy(alpha = 0.7f), radius = rad * 1.35f,
-                        center = Offset(x, y))
-                    drawCircle(Pal.screw.copy(alpha = 0.65f), radius = rad, center = Offset(x, y))
-                    drawLine(
-                        Pal.panelEdge.copy(alpha = 0.8f),
-                        Offset(x - rad * 0.7f, y - rad * 0.7f),
-                        Offset(x + rad * 0.7f, y + rad * 0.7f),
-                        strokeWidth = 1f,
-                    )
-                }
-            }
-        }
+        content()
     }
 }
 

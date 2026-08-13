@@ -303,8 +303,19 @@ val REPAIRS = listOf(
     RepairItem("full", "Full in-frame rebuild", 11800.0, 96.0),
 )
 
-/** Time compression steps offered on the panel. */
-val TIME_SCALES = intArrayOf(1, 2, 5, 15, 60, 300)
+/**
+ * Time compression steps offered on the panel.
+ *
+ * 1x is real time and is what you drop to for synchronising, where the
+ * pointer's sweep is the whole skill. Everything else in running a station --
+ * warming a block, filling a tank, watching the evening peak build -- happens
+ * on a clock measured in tens of minutes, so the plant runs at [DEFAULT_SCALE]
+ * unless you say otherwise.
+ */
+val TIME_SCALES = intArrayOf(1, 2, 5, 15, 60, 300, 1000)
+
+/** Where the clock sits on a new career. */
+const val DEFAULT_SCALE = 5
 
 /**
  * Above this compression the fast electromechanical states are solved to their

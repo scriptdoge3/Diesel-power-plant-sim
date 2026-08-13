@@ -38,7 +38,7 @@ class Sim(seed: Int = 20260811) {
 
     var gameSeconds = 4.0 * 86400.0 + 6.0 * 3600.0   // start Jan 5th, 06:00
         private set
-    var timeScale = 1
+    var timeScale = DEFAULT_SCALE
         private set
     var paused = false
 

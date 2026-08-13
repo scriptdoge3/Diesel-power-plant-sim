@@ -105,15 +105,18 @@ private fun GameRoot() {
             val dt = (now - last) / 1_000_000_000.0
             last = now
             // The world holds while you are reading. A story beat should not
-            // cost you the frequency.
-            if (host.sim.prologueSeen && host.sim.pendingChapters.isEmpty()) {
-                host.advance(dt, context)
-            }
+            // cost you the frequency -- but the clocks keep turning, or the
+            // page you are reading has nothing to redraw it when you close it.
+            val storyHold = !host.sim.prologueSeen || host.sim.pendingChapters.isNotEmpty()
+            host.advance(dt, context, stepWorld = !storyHold)
         }
     }
 
-    // Read the tick so the whole shell recomposes each frame.
-    @Suppress("UNUSED_EXPRESSION") host.tick
+    // The shell itself only has to keep up with the story overlays, which
+    // appear on the hour rather than on the frame. The boards inside it read
+    // their own clock, so the board you are not looking at costs nothing and
+    // the board you are looks after itself.
+    @Suppress("UNUSED_EXPRESSION") host.slowTick
 
     Scaffold(
         containerColor = Pal.bg,
@@ -122,11 +125,14 @@ private fun GameRoot() {
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
             Column(Modifier.fillMaxSize()) {
-                StatusBar(host)
+                Live(host) { StatusBar(host) }
                 Box(Modifier.fillMaxSize()) {
                     when (tab) {
-                        Tab.CONTROL -> ControlRoomBoard(host)
-                        Tab.ELECTRICAL -> ElectricalBoard(host)
+                        // The two boards that watch electricity run at the fast
+                        // clock; R&D runs at the slow one, because a tech tree
+                        // is a shopping list and shopping lists do not flicker.
+                        Tab.CONTROL -> Live(host) { ControlRoomBoard(host) }
+                        Tab.ELECTRICAL -> Live(host) { ElectricalBoard(host) }
                         Tab.RND -> RndBoard(host)
                     }
                 }
@@ -135,12 +141,14 @@ private fun GameRoot() {
             when {
                 !host.sim.prologueSeen -> PrologueSheet {
                     host.sim.prologueSeen = true
+                    host.poke()
                     host.save(context)
                 }
                 host.sim.pendingChapters.isNotEmpty() -> {
                     val ch = host.sim.pendingChapters.first()
                     ChapterSheet(ch.title, ch.body) {
                         host.sim.pendingChapters.removeFirst()
+                        host.poke()
                         host.save(context)
                     }
                 }
@@ -153,6 +161,20 @@ private fun GameRoot() {
             }
         }
     }
+}
+
+/**
+ * Wraps a board so that it, and nothing above it, recomposes on the fast UI
+ * clock.
+ *
+ * The read has to sit inside its own restartable composable: read the tick in
+ * [GameRoot] and every invalidation takes the whole tree with it, including the
+ * boards you are not stood at.
+ */
+@Composable
+private fun Live(host: GameHost, content: @Composable () -> Unit) {
+    @Suppress("UNUSED_EXPRESSION") host.tick
+    content()
 }
 
 /**

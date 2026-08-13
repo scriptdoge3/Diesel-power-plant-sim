@@ -67,7 +67,7 @@ private fun PowerMeters(u: Genset) {
             AnalogGauge(
                 // Expanded scale. 80-100 Hz put the whole in-band region inside
                 // one tick and made the meter useless for the job it exists for.
-                "Frequency", u.freqHz, 84.0, 96.0, "Hz", Modifier.weight(1f), decimals = 1,
+                "Frequency", { u.freqHz }, 84.0, 96.0, "Hz", Modifier.weight(1f), decimals = 1,
                 bands = listOf(
                     Triple(84.0, Nominal.FREQ - Nominal.FREQ_BAND, Pal.amber),
                     Triple(Nominal.FREQ - Nominal.FREQ_BAND, Nominal.FREQ + Nominal.FREQ_BAND, Pal.green),
@@ -76,7 +76,7 @@ private fun PowerMeters(u: Genset) {
                 majorTicks = 6,
             )
             AnalogGauge(
-                "Real power", u.elecKW, -10.0, u.spec.ratedKW * 1.3, "kW", Modifier.weight(1f),
+                "Real power", { u.elecKW }, -10.0, u.spec.ratedKW * 1.3, "kW", Modifier.weight(1f),
                 bands = listOf(
                     Triple(-10.0, 0.0, Pal.red),
                     Triple(u.spec.ratedKW, u.spec.ratedKW * 1.3, Pal.red),
@@ -94,7 +94,7 @@ private fun VoltageMeters(u: Genset) {
     PanelCard {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AnalogGauge(
-                "Volts", u.terminalVoltsPU * Nominal.GEN_VOLTS, 0.0, 600.0, "V",
+                "Volts", { u.terminalVoltsPU * Nominal.GEN_VOLTS }, 0.0, 600.0, "V",
                 Modifier.weight(1f), majorTicks = 6,
                 bands = listOf(
                     Triple(456.0, 504.0, Pal.green),
@@ -103,7 +103,7 @@ private fun VoltageMeters(u: Genset) {
                 subtitle = "%,.0f V line".format(u.terminalVoltsPU * Nominal.LINE_VOLTS),
             )
             AnalogGauge(
-                "Reactive", u.kvar, -u.spec.ratedKVA * 0.6, u.spec.ratedKVA * 0.85, "kVAr",
+                "Reactive", { u.kvar }, -u.spec.ratedKVA * 0.6, u.spec.ratedKVA * 0.85, "kVAr",
                 Modifier.weight(1f), majorTicks = 6,
                 subtitle = "pf %.2f %s".format(
                     abs(u.powerFactor), if (u.kvar >= 0) "lag" else "lead"),
@@ -135,7 +135,7 @@ private fun SyncAndBreaker(host: GameHost, u: Genset) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(104.dp)) {
                 Synchroscope(
-                    angleDeg = if (live) u.phaseDeg else 0.0,
+                    angleDeg = { if (live) u.phaseDeg else 0.0 },
                     slipHz = check.slipHz,
                     slipRpm = check.slipRpm,
                     windowDeg = Nominal.SYNC_ANGLE_DEG,

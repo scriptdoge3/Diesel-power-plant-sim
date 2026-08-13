@@ -111,6 +111,7 @@ fun PlantOverview(host: GameHost) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Chip(if (sim.autoPlant) "AUTO ON" else "AUTO OFF", sim.autoPlant, Pal.violet) {
                     sim.autoPlant = !sim.autoPlant
+                    host.poke()
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
